@@ -1,0 +1,10 @@
+.editorconfig
+.dockerignore
+.gitignore
+README.md
+VERSION.md
+build
+example
+docker-compose.yml
+azure-pipelines.yml
+env.sh

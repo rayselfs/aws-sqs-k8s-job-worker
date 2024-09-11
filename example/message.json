@@ -1,0 +1,27 @@
+{
+  "id": "31a89a91-43d8-4786-a195-9b25cec28a44",
+  "service": "example",
+  "job": {
+    "prefixName": "bb",
+    "namespace": "default",
+    "image": "busybox",
+    "command": ["/bin/sh", "-c", "echo Hello World && sleep 30 && exit 0"],
+    "serviceAccount": "default",
+    "ttlSecondsAfterFinished": 20,
+    "backoffLimit": 0,
+    "activeDeadlineSeconds": 600,
+    "resources": {
+      "limits": {
+        "cpu": "1",
+        "memory": "512Mi"
+      },
+      "requests": {
+        "cpu": "500m",
+        "memory": "256Mi"
+      }
+    }
+  },
+  "webhook": {
+    "url": "http://aws-sqs-job-callback.default.svc.cluster.local:8080"
+  }
+}
