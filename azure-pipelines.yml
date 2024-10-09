@@ -19,9 +19,7 @@ trigger:
 pool: Default
 
 variables:
-  REPOSITORY: ops/aws-sqs-job-worker
-  SERVICE_NAMESPACE: ops
-  SERVICE_NAME: aws-sqs-job-worker
+  REPOSITORY: ops/aws-sqs-k8s-job-worker
 
 resources:
   repositories:
@@ -51,16 +49,5 @@ steps:
       repository: $(REPOSITORY)
       image_tag: "$(IMAGE_TAG)"
       multi_platform: true
-
-  # - ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/master') }}:
-  #     - template: templates/cd-trigger.yaml@ops-pipelines
-  #       parameters:
-  #         deployment_project_name: OPS
-  #         deployment_git_repo_name: vr-ops-kops
-  #         namespace: $(SERVICE_NAMESPACE)
-  #         service_folder: $(SERVICE_NAME)
-  #         environment: dev
-  #         image_name: $(SERVICE_NAME)-image
-  #         build_tag: $(IMAGE_TAG)
-  #         only_env: $(ONLY_ENV)
-  #         config_path: deployments/dev.env
+      sync_china: true
+      sync_eti: true
