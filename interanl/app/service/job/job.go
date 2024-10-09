@@ -2,6 +2,7 @@ package job
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
@@ -70,11 +71,14 @@ func Execution(record Record) {
 
 	// check job exist
 	job, errorDetail := jobMsg.JobExists(jobName)
-	if errorDetail != nil {
-		klog.Errorf("[%s] %v\n", jobMsg.ID, errorDetail.Message)
+	if errorDetail == nil {
+		klog.Errorf("[%s] job %s not exists in namespace %s\n", jobMsg.ID, jobName, jobMsg.Job.Namespace)
 		requestBody.Status = k8s.StatusException
 		requestBody.Detail = map[string]interface{}{
-			"error": errorDetail,
+			"error": &callback.ErrorDetail{
+				ErrorCode: callback.ERROR_CODE_JOB_NOT_EXIST,
+				Message:   fmt.Sprintf("job %s not exists in namespace %s", jobName, jobMsg.Job.Namespace),
+			},
 		}
 		sendCallback(jobMsg, requestBody)
 		return
@@ -163,24 +167,6 @@ func validation(jobMsg k8s.JobMessage) (int, map[string]interface{}) {
 		}
 	}
 	return 0, nil
-}
-
-func RecordCheckJobExist(jobMsg k8s.JobMessage, requestBody callback.RequestBody) int {
-	jobName, _ := jobMsg.CheckJobName()
-	_, errorDetail := jobMsg.JobExists(jobName)
-	if errorDetail == nil {
-		klog.Errorf("[%s] watch job completion failed, job %s not exists\n", jobMsg.ID, jobName)
-		requestBody.Status = k8s.StatusException
-		requestBody.Detail = map[string]interface{}{
-			"error": &callback.ErrorDetail{
-				ErrorCode: callback.ERROR_CODE_JOB_NOT_EXIST,
-				Message:   "watch job completion failed, job not exists",
-			},
-		}
-		sendCallback(jobMsg, requestBody)
-	}
-
-	return requestBody.Status
 }
 
 func WaitPodRunning(jobMsg k8s.JobMessage, job *batchV1.Job, requestBody callback.RequestBody) int {
