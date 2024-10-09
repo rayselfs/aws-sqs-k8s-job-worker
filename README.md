@@ -6,8 +6,8 @@
 - job.namespace: job namespace
 - job.image: job image
 - job.command: container command with arg, only use arg for parameter
-- job.ttlSecondsAfterFinished: seconds, automatic cleanup for finished jobs
-- job.backoffLimit: specify the number of retries
+- job.ttlSecondsAfterFinished: seconds, automatic cleanup for finished jobs, need larger than 60s
+- job.backoffLimit: specify the number of retries, set to 0
 - job.activeDeadlineSeconds: seconds, the Job runtime exceeded the specified
 - job.resources: cpu, memory setting
 - job.nodeSelector: job affinity with node selector
@@ -30,7 +30,7 @@
     "image": "busybox",
     "command": ["/bin/sh", "-c", "echo Hello World && sleep 30 && exit 0"],
     "serviceAccount": "default",
-    "ttlSecondsAfterFinished": 20,
+    "ttlSecondsAfterFinished": 60,
     "backoffLimit": 0,
     "activeDeadlineSeconds": 600,
     "resources": {

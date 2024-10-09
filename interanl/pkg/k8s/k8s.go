@@ -17,8 +17,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/klog/v2"
 )
+
+var Clientset *kubernetes.Clientset
 
 const (
 	pvcName            = "persistent-storage"
@@ -78,6 +81,33 @@ type Toleration struct {
 
 type Webhook struct {
 	URL string `json:"url" validate:"required"`
+}
+
+// SetClient creates a Kubernetes clientset.
+func Setup() (err error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return
+	}
+
+	Clientset, err = kubernetes.NewForConfig(config)
+
+	return
+}
+
+// GetLeaseLock returns a Kubernetes LeaseLock and hostname
+func GetLeaseLock(id string) *resourcelock.LeaseLock {
+	// Create the lock configuration
+	return &resourcelock.LeaseLock{
+		LeaseMeta: metaV1.ObjectMeta{
+			Namespace: config.Env.PodNamespace,
+			Name:      config.Env.LeaderElectionLockName,
+		},
+		Client: Clientset.CoordinationV1(),
+		LockConfig: resourcelock.ResourceLockConfig{
+			Identity: id,
+		},
+	}
 }
 
 // CheckJobName generates a job name based on the job ID and checks if it is valid.
@@ -207,27 +237,12 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 	return []coreV1.Container{mainSpec}
 }
 
-// GetClient creates a Kubernetes clientset.
-func GetClient() *kubernetes.Clientset {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		klog.Fatalf("Error creating in-cluster config: %v\n", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		klog.Fatalf("Error creating clientset: %v\n", err)
-	}
-
-	return clientset
-}
-
 // ApplyJob creates a Kubernetes Job in the specified namespace.
-func (jobMsg JobMessage) ApplyJob(clientset *kubernetes.Clientset, jobName string) (*batchV1.Job, *callback.ErrorDetail) {
+func (jobMsg JobMessage) ApplyJob(jobName string) (*batchV1.Job, *callback.ErrorDetail) {
 	namespace := jobMsg.Job.Namespace
-	jobClient := clientset.BatchV1().Jobs(namespace)
+	jobClient := Clientset.BatchV1().Jobs(namespace)
 
-	klog.Infof("[%s] start create k8s job\n", jobMsg.ID)
+	klog.Infof("[%s] create k8s job\n", jobMsg.ID)
 
 	result, err := jobClient.Create(context.TODO(), jobMsg.getJobSpec(jobName), metaV1.CreateOptions{})
 	if err != nil {
@@ -241,9 +256,9 @@ func (jobMsg JobMessage) ApplyJob(clientset *kubernetes.Clientset, jobName strin
 }
 
 // JobExists checks if a job with the given name already exists in the specified namespace.
-func (jobMsg JobMessage) JobExists(clientset *kubernetes.Clientset, jobName string) (job *batchV1.Job, errorDetail *callback.ErrorDetail) {
+func (jobMsg JobMessage) JobExists(jobName string) (job *batchV1.Job, errorDetail *callback.ErrorDetail) {
 	// Try to get the Job
-	job, err := clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Get(context.TODO(), jobName, metaV1.GetOptions{})
+	job, err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Get(context.TODO(), jobName, metaV1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Job does not exist
@@ -252,7 +267,7 @@ func (jobMsg JobMessage) JobExists(clientset *kubernetes.Clientset, jobName stri
 
 		// Some other error occurred
 		errorDetail = &callback.ErrorDetail{
-			ErrorCode: callback.ERROR_CODE_JOB_GET_FAILED,
+			ErrorCode: callback.ERROR_CODE_GET_JOB_FAILED,
 			Message:   err.Error(),
 		}
 		return
@@ -260,7 +275,7 @@ func (jobMsg JobMessage) JobExists(clientset *kubernetes.Clientset, jobName stri
 
 	// Job exists
 	errorDetail = &callback.ErrorDetail{
-		ErrorCode: callback.ERROR_CODE_JOB_EXIST,
+		ErrorCode: callback.ERROR_CODE_JOB_EXIST_WITH_NEW_MESSAGE,
 		Message:   fmt.Sprintf("job %s already exists in namespace %s", jobName, jobMsg.Job.Namespace),
 	}
 	return
@@ -279,11 +294,21 @@ func (jobMsg JobMessage) CheckActiveDeadlineSeconds() *callback.ErrorDetail {
 }
 
 // WatchPodRunning watches for the running phase of a specific pod.
-func (jobMsg JobMessage) WatchPodRunning(clientset *kubernetes.Clientset, job *batchV1.Job) (jobStatus int, detail map[string]interface{}) {
-	pod := jobMsg.getJobPods(clientset, job.GetObjectMeta().GetName())
+func (jobMsg JobMessage) WatchPodRunning(job *batchV1.Job) (jobStatus int, detail map[string]interface{}) {
+	pod, err := jobMsg.getJobPods(job.GetObjectMeta().GetName())
+	if err != nil {
+		jobStatus = StatusException
+		detail = map[string]interface{}{
+			"error": &callback.ErrorDetail{
+				ErrorCode: callback.ERROR_CODE_GET_JOB_POD_FAILED,
+				Message:   err.Error(),
+			},
+		}
+		return
+	}
 
 	lw := cache.NewListWatchFromClient(
-		clientset.CoreV1().RESTClient(),
+		Clientset.CoreV1().RESTClient(),
 		"pods",
 		jobMsg.Job.Namespace,
 		fields.OneTermEqualSelector("metadata.name", pod.Name),
@@ -293,14 +318,13 @@ func (jobMsg JobMessage) WatchPodRunning(clientset *kubernetes.Clientset, job *b
 	stopCh := make(chan struct{})
 
 	// Start the watch and handle the event loop
-	_, controller := cache.NewInformer(
-		lw,
-		&coreV1.Pod{},
-		0, // No resync period, we just want real-time updates
-		cache.ResourceEventHandlerFuncs{
+	_, controller := cache.NewInformerWithOptions(cache.InformerOptions{
+		ListerWatcher: lw,
+		ObjectType:    &coreV1.Pod{},
+		ResyncPeriod:  0,
+		Handler: cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				pod := obj.(*coreV1.Pod)
-				klog.Infof("[%s] Pod created: %s\n", jobMsg.ID, pod.Name)
+				klog.Infof("[%s] pod created\n", jobMsg.ID)
 			},
 			// Watch for pod updates
 			UpdateFunc: func(oldObj, newObj interface{}) {
@@ -308,6 +332,8 @@ func (jobMsg JobMessage) WatchPodRunning(clientset *kubernetes.Clientset, job *b
 
 				// Check if the Pod has transitioned to the Running phase
 				if pod.Status.Phase == coreV1.PodRunning {
+					klog.Infof("[%s] pod running\n", jobMsg.ID)
+
 					jobStatus = StatusPodRunning
 					detail = map[string]interface{}{
 						"podId":   pod.GetObjectMeta().GetUID(),
@@ -320,7 +346,7 @@ func (jobMsg JobMessage) WatchPodRunning(clientset *kubernetes.Clientset, job *b
 				}
 			},
 		},
-	)
+	})
 
 	// Run the controller in the current thread, no background
 	go controller.Run(stopCh)
@@ -332,31 +358,35 @@ func (jobMsg JobMessage) WatchPodRunning(clientset *kubernetes.Clientset, job *b
 }
 
 // getJobPods gets the pods associated with a specific job.
-func (jobMsg JobMessage) getJobPods(clientset *kubernetes.Clientset, jobName string) *coreV1.Pod {
-	podsClient := clientset.CoreV1().Pods(jobMsg.Job.Namespace)
+func (jobMsg JobMessage) getJobPods(jobName string) (*coreV1.Pod, error) {
+	podsClient := Clientset.CoreV1().Pods(jobMsg.Job.Namespace)
+
+	count := 10
 
 	// List all pods in the namespace
-	pods, err := podsClient.List(context.TODO(), metaV1.ListOptions{
-		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
-	})
-	if err != nil {
-		klog.Errorf("[%s] Failed to list pods: %v", jobMsg.ID, err.Error())
+	for i := 0; i < count; i++ {
+		pods, err := podsClient.List(context.TODO(), metaV1.ListOptions{
+			LabelSelector: fmt.Sprintf("job-name=%s", jobName),
+		})
+		if err != nil {
+			klog.Errorf("[%s] Failed to list pods: %v", jobMsg.ID, err.Error())
+		}
+
+		if pods != nil && pods.Size() > 0 {
+			return &pods.Items[0], nil
+		}
+
+		time.Sleep(1 * time.Second)
 	}
 
-	// Print pod information
-	for _, pod := range pods.Items {
-		klog.Infof("[%s] get pod: %s\n", jobMsg.ID, pod.Name)
-		return &pod
-	}
-
-	return nil
+	return nil, fmt.Errorf("failed to get pod for job %s", jobName)
 }
 
 // WatchJobCompletion watches for the completion or failure of a specific job.
-func (jobMsg JobMessage) WatchJobCompletion(clientset *kubernetes.Clientset, namespace, jobName string) (jobStatus int, errorContent *callback.ErrorDetail) {
+func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatus int, errorContent *callback.ErrorDetail) {
 	// Create a ListWatch for the job.
 	lw := cache.NewListWatchFromClient(
-		clientset.BatchV1().RESTClient(),
+		Clientset.BatchV1().RESTClient(),
 		"jobs",
 		namespace,
 		fields.OneTermEqualSelector("metadata.name", jobName),
@@ -365,11 +395,11 @@ func (jobMsg JobMessage) WatchJobCompletion(clientset *kubernetes.Clientset, nam
 	// Create an Informer to watch for job status updates.
 	stopCh := make(chan struct{})
 
-	_, controller := cache.NewInformer(
-		lw,
-		&batchV1.Job{},
-		0,
-		cache.ResourceEventHandlerFuncs{
+	_, controller := cache.NewInformerWithOptions(cache.InformerOptions{
+		ListerWatcher: lw,
+		ObjectType:    &batchV1.Job{},
+		ResyncPeriod:  0,
+		Handler: cache.ResourceEventHandlerFuncs{
 			UpdateFunc: func(oldObj, newObj interface{}) {
 				job, ok := newObj.(*batchV1.Job)
 				if !ok {
@@ -406,7 +436,7 @@ func (jobMsg JobMessage) WatchJobCompletion(clientset *kubernetes.Clientset, nam
 				}
 			},
 		},
-	)
+	})
 
 	// Start the controller.
 	go controller.Run(stopCh)
@@ -417,13 +447,34 @@ func (jobMsg JobMessage) WatchJobCompletion(clientset *kubernetes.Clientset, nam
 	return
 }
 
-// GetJobDuration calculates the duration of a job execution.
-func (jobMsg JobMessage) GetJobDuration(clientset *kubernetes.Clientset, jobName string) (*time.Duration, *callback.ErrorDetail) {
+// CheckJobStatus checks the status of a specific job.
+func (jobMsg JobMessage) CheckJobStatus(jobName string) (int, *callback.ErrorDetail) {
 	// Get the job
-	job, err := clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Get(context.TODO(), jobName, metaV1.GetOptions{})
+	job, err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Get(context.TODO(), jobName, metaV1.GetOptions{})
 	if err != nil {
+		klog.Errorf("CheckJobStatus get job error: %v", err.Error())
+		return 0, &callback.ErrorDetail{
+			ErrorCode: callback.ERROR_CODE_GET_JOB_FAILED,
+			Message:   fmt.Sprintf("get job error: %v", err.Error()),
+		}
+	}
+
+	// Check the job status
+	if job.Status.Succeeded > 0 {
+		return StatusJobCompleted, nil
+	}
+
+	return StatusJobFailed, nil
+}
+
+// GetJobDuration calculates the duration of a job execution.
+func (jobMsg JobMessage) GetJobDuration(jobName string) (*time.Duration, *callback.ErrorDetail) {
+	// Get the job
+	job, err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Get(context.TODO(), jobName, metaV1.GetOptions{})
+	if err != nil {
+		klog.Errorf("GetJobDuration get job error: %v", err.Error())
 		return nil, &callback.ErrorDetail{
-			ErrorCode: callback.ERROR_CODE_JOB_GET_FAILED,
+			ErrorCode: callback.ERROR_CODE_GET_JOB_FAILED,
 			Message:   fmt.Sprintf("get job error: %v", err.Error()),
 		}
 	}
@@ -439,20 +490,4 @@ func hashStringSHA256(s string) string {
 	h.Write([]byte(s))
 	hashed := fmt.Sprintf("%x", h.Sum(nil))
 	return hashed[:8]
-}
-
-// PodExists checks if a pod with the given name exists in the specified namespace
-func PodExists(clientset *kubernetes.Clientset, namespace, podName string) (bool, error) {
-	// Try to get the pod
-	_, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), podName, metaV1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// Pod not found
-			return false, nil
-		}
-		// An error occurred while trying to get the pod
-		return false, err
-	}
-	// Pod found
-	return true, nil
 }

@@ -6,23 +6,19 @@ import (
 	"aws-sqs-k8s-job-worker/interanl/pkg/aws/sqs"
 	"aws-sqs-k8s-job-worker/interanl/pkg/k8s"
 	"aws-sqs-k8s-job-worker/interanl/pkg/rdb"
+	"context"
 	"encoding/json"
-	"strings"
+	"log"
+	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/go-playground/validator/v10"
-	"github.com/go-redsync/redsync/v4"
-	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
+	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/klog/v2"
 )
 
 var SqsActions sqs.SqsActions
-
-type Record struct {
-	SQSMessage types.Message  `json:"sqsMessage"`
-	JobMessage k8s.JobMessage `json:"jobMessage"`
-}
 
 func main() {
 	if err := config.Setup(); err != nil {
@@ -33,8 +29,54 @@ func main() {
 		klog.Fatalf("unable to set redis: %v", err)
 	}
 
-	recordSetup()
+	if err := k8s.Setup(); err != nil {
+		klog.Fatalf("unable to set k8s: %v\n", err)
+	}
 
+	id := config.Env.PodName
+	lock := k8s.GetLeaseLock(id)
+
+	leaderElectorConfig := leaderelection.LeaderElectionConfig{
+		Lock:          lock,
+		LeaseDuration: 15 * time.Second,
+		RenewDeadline: 10 * time.Second,
+		RetryPeriod:   2 * time.Second,
+		Callbacks: leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(ctx context.Context) {
+				klog.Info("started leading")
+				handleRecords()
+				handleMessages()
+			},
+			OnStoppedLeading: func() {
+				klog.Info("stopped leading")
+				os.Exit(0)
+			},
+			OnNewLeader: func(identity string) {
+				if identity == id {
+					klog.Info("current New leader")
+				} else {
+					klog.Infof("new leader elected: %s\n", identity)
+				}
+			},
+		},
+	}
+
+	elector, err := leaderelection.NewLeaderElector(leaderElectorConfig)
+	if err != nil {
+		log.Fatalf("error creating leader elector: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go elector.Run(ctx)
+
+	// Wait indefinitely
+	select {}
+}
+
+// handleMessages handle messages in SQS
+func handleMessages() {
 	sqsClient := sqs.Setup(config.Env.AWSSQSRegion)
 	queueUrl, err := sqs.GetQueueUrl(sqsClient, config.Env.AWSSQSQueue)
 	if err != nil {
@@ -46,7 +88,7 @@ func main() {
 		QueueURL:  queueUrl,
 	}
 
-	klog.Info("start polling")
+	klog.Info("start sqs polling")
 	for {
 		messages, err := SqsActions.GetMessages()
 		if err != nil {
@@ -55,7 +97,6 @@ func main() {
 
 		if len(messages) > 0 {
 			message := messages[0]
-
 			go messageProcess(message)
 		}
 
@@ -63,90 +104,20 @@ func main() {
 	}
 }
 
-func recordSetup() {
-	leaderName := config.Env.PodName
-
-	pool := goredis.NewPool(rdb.Client)
-	rs := redsync.New(pool)
-
-	klog.Info("redis lock process")
-	mutex := rs.NewMutex(removeLastItem(removeLastItem(leaderName)))
-	if err := mutex.Lock(); err != nil {
-		klog.Warningf("unable to get leader lock: %v", err)
-		return
-	}
-
-	// get leader
-	klog.Info("get leader list in redis")
-	rdbList, err := rdb.GetByPrefix(removeLastItem(leaderName))
-	if err != nil {
-		klog.Warningf("unable to get leader list in redis: %v", err)
-		return
-	}
-	clientset := k8s.GetClient()
-	for key := range rdbList {
-		klog.Info("check leader pod exists")
-		check, err := k8s.PodExists(clientset, config.Env.PodNamespace, key)
-		if err != nil {
-			klog.Warningf("unable to check pod: %v", err)
-			return
-		}
-
-		if check {
-			klog.Infof("leader already exists: %v", key)
-			return
-		}
-	}
-
-	klog.Infof("clean old data")
-	rdbList, err = rdb.GetByPrefix(removeLastItem(removeLastItem(leaderName)))
-	if err != nil {
-		klog.Warningf("unable to get leader list in redis: %v", err)
-		return
-	}
-	for key := range rdbList {
-		klog.Infof("delete key: %v", key)
-		rdb.Delete(key)
-	}
-
-	klog.Info("set new leader")
-	rdb.Set(leaderName, "enable", 0)
-
-	listAndRunRecord()
-
-	if ok, err := mutex.Unlock(); !ok || err != nil {
-		klog.Warningf("unlock failed: %v", err)
-		return
-	}
-}
-
-func removeLastItem(input string) string {
-	delimiter := "-"
-
-	// Find the last occurrence of the delimiter
-	lastIndex := strings.LastIndex(input, delimiter)
-	if lastIndex == -1 {
-		// Delimiter not found, return the original string
-		return input
-	}
-
-	// Slice the string to remove the last item
-	result := input[:lastIndex]
-	return result
-}
-
-func listAndRunRecord() {
+// handleRecords handle records in redis
+func handleRecords() {
 	rdbList, err := rdb.GetByPrefix(config.Env.RedisJobKeyPrefix)
 	if err != nil {
 		klog.Fatalf("unable to get list in redis: %v", err)
 	}
 
-	klog.Info("run record process")
+	klog.Info("start record process")
 	for _, data := range rdbList {
 		go recordProcess(data)
 	}
 }
 
+// messageProcess process message from SQS
 func messageProcess(message types.Message) {
 	klog.Info("message received, ID:", *message.MessageId)
 	klog.Info("message body:", *message.Body)
@@ -166,44 +137,43 @@ func messageProcess(message types.Message) {
 	}
 
 	if _, err := rdb.Get(config.Env.RedisJobKeyPrefix + jobMsg.ID); err == nil {
-		klog.Errorf("job %v already exists in redis", jobMsg.ID)
+		klog.Errorf("job %v has been executed", jobMsg.ID)
+		SqsActions.DeleteMessage(message)
 		return
 	}
 
 	// set backoff limit to 0 to avoid job retry
 	jobMsg.Job.BackoffLimit = 0
 
-	record := Record{
+	record := job.Record{
 		SQSMessage: message,
 		JobMessage: jobMsg,
+		Status:     job.StatusInit,
 	}
 	recordData, _ := json.Marshal(record)
 	rdb.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
 
-	if err := SqsActions.DeleteMessage(message); err != nil {
-		klog.Errorf("unable to delete message %v: %v", *message.MessageId, err)
-	}
+	SqsActions.DeleteMessage(message)
 
 	// process
-	job.Execution(jobMsg)
+	klog.Info("start message process")
+	job.Execution(record)
 
 	if err := rdb.Delete(config.Env.RedisJobKeyPrefix + jobMsg.ID); err != nil {
 		klog.Errorf("unable to delete job %v from redis: %v", jobMsg.ID, err)
 	}
 }
 
+// recordProcess process message from redis
 func recordProcess(recordData string) {
-	var record Record
+	var record job.Record
 	if err := json.Unmarshal([]byte(recordData), &record); err != nil {
 		klog.Errorf("failed to unmarshal record: %v", err)
 		return
 	}
 
 	klog.Info("Record received, ID:", record.JobMessage.ID)
-
-	// process
-	clientset, requestBody := job.InitInstance(record.JobMessage)
-	job.WaitJobCompletion(clientset, record.JobMessage, requestBody)
+	job.Execution(record)
 
 	if err := rdb.Delete(config.Env.RedisJobKeyPrefix + record.JobMessage.ID); err != nil {
 		klog.Errorf("unable to delete job %v from redis: %v", record.JobMessage.ID, err)

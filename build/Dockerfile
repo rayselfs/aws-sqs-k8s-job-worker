@@ -10,7 +10,7 @@ RUN \
     && go mod download
 
 ARG TARGETOS TARGETARCH
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /app/main cmd/worker/main.go
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /app/main cmd/main.go
 
 FROM gcr.io/distroless/static-debian11 AS final
 

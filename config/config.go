@@ -18,6 +18,7 @@ func Setup() error {
 var Env EnvVariable
 
 type EnvVariable struct {
+	LeaderElectionLockName   string `env:"LEADER_ELECTION_LOCK_NAME" envDefault:"aws-sqs-job-worker-lock"`
 	PodName                  string `env:"POD_NAME,required"`
 	PodNamespace             string `env:"POD_NAMESPACE,required"`
 	LeaderLockName           string `env:"LEADER_LOCK_NAME" envDefault:"job-worker"`

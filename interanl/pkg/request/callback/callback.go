@@ -23,14 +23,16 @@ type ErrorDetail struct {
 }
 
 var (
-	ERROR_CODE_JOB_NAME_INVALID                      = "JOB_NAME_INVALID"
-	ERROR_CODE_JOB_EXIST                             = "JOB_EXIST"
-	ERROR_CODE_JOB_NOT_EXIST                         = "JOB_NOT_EXIST"
-	ERROR_CODE_JOB_CREATE_FAILED                     = "JOB_CREATE_FAILED"
-	ERROR_CODE_JOB_GET_FAILED                        = "JOB_GET_FAILED"
-	ERROR_CODE_JOB_ACTIVE_DEADLINE_SECONDS_TOO_LARGE = "JOB_ACTIVE_DEADLINE_SECONDS_TOO_LARGE"
-	ERROR_CODE_JOB_CAST_OBJECT_FAILED                = "JOB_CAST_OBJECT_FAILED"
-	ERROR_CODE_JOB_RUN_FAILED                        = "JOB_RUN_FAILED"
+	ERROR_CODE_JOB_NAME_INVALID                         = "A101"
+	ERROR_CODE_JOB_EXIST_WITH_NEW_MESSAGE               = "A102"
+	ERROR_CODE_JOB_NOT_EXIST                            = "A103"
+	ERROR_CODE_GET_JOB_POD_FAILED                       = "A104"
+	ERROR_CODE_JOB_CREATE_FAILED                        = "A105"
+	ERROR_CODE_GET_JOB_FAILED                           = "A106"
+	ERROR_CODE_JOB_TTL_SECONDS_AFTER_FINISHED_TOO_SMALL = "A107"
+	ERROR_CODE_JOB_ACTIVE_DEADLINE_SECONDS_TOO_LARGE    = "A108"
+	ERROR_CODE_JOB_CAST_OBJECT_FAILED                   = "A107"
+	ERROR_CODE_JOB_RUN_FAILED                           = "A109"
 )
 
 func (body RequestBody) Post(url string) (*http.Response, error) {
