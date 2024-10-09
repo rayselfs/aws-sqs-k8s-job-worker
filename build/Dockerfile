@@ -4,10 +4,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN \
-    rm -rf cmd/callback \
-    && go mod tidy \
-    && go mod download
+RUN go mod tidy && go mod download
 
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /app/main cmd/main.go
