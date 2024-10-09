@@ -359,20 +359,19 @@ func (jobMsg JobMessage) WatchPodRunning(job *batchV1.Job) (jobStatus int, detai
 
 // getJobPods gets the pods associated with a specific job.
 func (jobMsg JobMessage) getJobPods(jobName string) (*coreV1.Pod, error) {
-	podsClient := Clientset.CoreV1().Pods(jobMsg.Job.Namespace)
-
 	count := 10
 
 	// List all pods in the namespace
 	for i := 0; i < count; i++ {
-		pods, err := podsClient.List(context.TODO(), metaV1.ListOptions{
+		pods, err := Clientset.CoreV1().Pods(jobMsg.Job.Namespace).List(context.TODO(), metaV1.ListOptions{
 			LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 		})
 		if err != nil {
 			klog.Errorf("[%s] Failed to list pods: %v", jobMsg.ID, err.Error())
+			break
 		}
 
-		if pods != nil && pods.Size() > 0 {
+		if pods != nil && len(pods.Items) > 0 {
 			return &pods.Items[0], nil
 		}
 
