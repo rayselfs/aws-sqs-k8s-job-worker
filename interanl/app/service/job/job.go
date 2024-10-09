@@ -33,18 +33,18 @@ func Execution(record Record) {
 	requestBody := GetCallbackRequest(record.JobMessage)
 	jobMsg := record.JobMessage
 
-	status, detail := validation(jobMsg)
-	if status != 0 {
-		requestBody.Status = status
-		requestBody.Detail = detail
-		sendCallback(jobMsg, requestBody)
-		return
-	}
-
 	// Start job
 	jobName, _ := jobMsg.CheckJobName()
 
 	if record.Status == StatusInit {
+		status, detail := validation(jobMsg)
+		if status != 0 {
+			requestBody.Status = status
+			requestBody.Detail = detail
+			sendCallback(jobMsg, requestBody)
+			return
+		}
+
 		job, errorDetail := jobMsg.ApplyJob(jobName)
 		if errorDetail != nil {
 			klog.Errorf("[%s] apply job error: %v\n", jobMsg.ID, errorDetail.Message)
@@ -86,7 +86,7 @@ func Execution(record Record) {
 
 	// process after job created
 	if record.Status == StatusJobCreated {
-		status = WaitPodRunning(jobMsg, job, requestBody)
+		status := WaitPodRunning(jobMsg, job, requestBody)
 		if status == k8s.StatusException {
 			return
 		}
