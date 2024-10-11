@@ -42,7 +42,7 @@ type JobMessage struct {
 type Job struct {
 	PrefixName              string        `json:"prefixName" validate:"required"`
 	Namespace               string        `json:"namespace" validate:"required"`
-	TTLSecondsAfterFinished int32         `json:"ttlSecondsAfterFinished" validate:"required"`
+	TTLSecondsAfterFinished int32         `json:"ttlSecondsAfterFinished"`
 	ActiveDeadlineSeconds   int64         `json:"activeDeadlineSeconds" validate:"required"`
 	BackoffLimit            int32         `json:"backoffLimit"`
 	Image                   string        `json:"image" validate:"required"`

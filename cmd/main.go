@@ -144,6 +144,9 @@ func messageProcess(message types.Message) {
 
 	// set backoff limit to 0 to avoid job retry
 	jobMsg.Job.BackoffLimit = 0
+	if jobMsg.Job.TTLSecondsAfterFinished == 0 {
+		jobMsg.Job.TTLSecondsAfterFinished = 60
+	}
 
 	record := job.Record{
 		SQSMessage: message,
