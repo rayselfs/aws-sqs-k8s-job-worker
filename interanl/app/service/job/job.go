@@ -98,7 +98,10 @@ func Execution(record Record) {
 
 	// process after job's pod running
 	if record.Status == StatusPodRunning {
-		WaitJobCompletion(jobMsg, job, requestBody)
+		status := WaitJobCompletion(jobMsg, job, requestBody)
+		if status == k8s.StatusJobFailed || status == k8s.StatusException {
+			return
+		}
 
 		record.Status = StatusJobDone
 		recordData, _ := json.Marshal(record)
@@ -180,7 +183,7 @@ func WaitPodRunning(jobMsg k8s.JobMessage, job *batchV1.Job, requestBody callbac
 	return requestBody.Status
 }
 
-func WaitJobCompletion(jobMsg k8s.JobMessage, job *batchV1.Job, requestBody callback.RequestBody) {
+func WaitJobCompletion(jobMsg k8s.JobMessage, job *batchV1.Job, requestBody callback.RequestBody) int {
 	// Watch for job completion
 	klog.Infof("[%s] %v\n", jobMsg.ID, "watching job completion")
 	jobStatus, errorDetail := jobMsg.WatchJobCompletion(jobMsg.Job.Namespace, job.GetObjectMeta().GetName())
@@ -191,10 +194,9 @@ func WaitJobCompletion(jobMsg k8s.JobMessage, job *batchV1.Job, requestBody call
 			"error": errorDetail,
 		}
 		sendCallback(jobMsg, requestBody)
-		return
 	}
 
-	return
+	return requestBody.Status
 }
 
 func GetJobDurection(jobMsg k8s.JobMessage, job *batchV1.Job, jobStatus int, requestBody callback.RequestBody) {
