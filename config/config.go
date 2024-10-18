@@ -27,6 +27,6 @@ type EnvVariable struct {
 	RedisDB                  int    `env:"REDIS_DB,required"`
 	RedisJobKeyPrefix        string `env:"REDIS_JOB_KEY_PREFIX" envDefault:"job-worker-"`
 	AWSSQSRegion             string `env:"AWS_SQS_REGION,required"`
-	AWSSQSQueue              string `env:"AWS_SQS_QUEUE,required"`
+	AWSSQSURL                string `env:"AWS_SQS_URL,required"`
 	ActiveDeadlineSecondsMax int64  `env:"ACTIVE_DEADLINE_SECONDS_MAX" envDefault:"86400"`
 }
