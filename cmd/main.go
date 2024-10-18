@@ -78,14 +78,10 @@ func main() {
 // handleMessages handle messages in SQS
 func handleMessages() {
 	sqsClient := sqs.Setup(config.Env.AWSSQSRegion)
-	queueUrl, err := sqs.GetQueueUrl(sqsClient, config.Env.AWSSQSQueue)
-	if err != nil {
-		klog.Fatalf("unable to get queue url: %v", err)
-	}
 
 	SqsActions = sqs.SqsActions{
 		SqsClient: sqsClient,
-		QueueURL:  queueUrl,
+		QueueURL:  &config.Env.AWSSQSURL,
 	}
 
 	klog.Info("start sqs polling")

@@ -28,14 +28,6 @@ func Setup(region string) *sqs.Client {
 	return svc
 }
 
-func GetQueueUrl(client *sqs.Client, queueName string) (*string, error) {
-	result, err := client.GetQueueUrl(context.TODO(), &sqs.GetQueueUrlInput{
-		QueueName: &queueName,
-	})
-
-	return result.QueueUrl, err
-}
-
 // ChangeVisibilityTimeout changes the visibility timeout of a specified message.
 func (actor SqsActions) ChangeVisibilityTimeout(msg types.Message, visibilityTimeout int32) error {
 	_, err := actor.SqsClient.ChangeMessageVisibility(context.TODO(), &sqs.ChangeMessageVisibilityInput{
