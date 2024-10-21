@@ -428,6 +428,13 @@ func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatu
 							ErrorCode: callback.ERROR_CODE_JOB_RUN_FAILED,
 							Message:   fmt.Sprintf("reason: %v, message: %v", condition.Reason, condition.Message),
 						}
+
+						// Delete the job
+						deletePolicy := metaV1.DeletePropagationForeground
+						_ = Clientset.BatchV1().Jobs(namespace).Delete(context.TODO(), jobName, metaV1.DeleteOptions{
+							PropagationPolicy: &deletePolicy,
+						})
+
 						// Stop the controller
 						close(stopCh)
 						return
