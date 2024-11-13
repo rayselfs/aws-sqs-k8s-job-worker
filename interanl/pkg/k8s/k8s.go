@@ -283,7 +283,7 @@ func (jobMsg JobMessage) JobExists(jobName string) (job *batchV1.Job, errorDetai
 
 // CheckActiveDeadlineSeconds checks if the activeDeadlineSeconds is within the allowed range.
 func (jobMsg JobMessage) CheckActiveDeadlineSeconds() *callback.ErrorDetail {
-	if jobMsg.Job.ActiveDeadlineSeconds >= config.Env.ActiveDeadlineSecondsMax {
+	if jobMsg.Job.ActiveDeadlineSeconds > config.Env.ActiveDeadlineSecondsMax {
 		return &callback.ErrorDetail{
 			ErrorCode: callback.ERROR_CODE_JOB_ACTIVE_DEADLINE_SECONDS_TOO_LARGE,
 			Message:   fmt.Sprintf("activeDeadlineSeconds must be smaller than %v", config.Env.ActiveDeadlineSecondsMax),
