@@ -51,6 +51,10 @@
       "key": "key",
       "value": "value"
     },
+    "fargate": {
+      "key": "WorkerType",
+      "value": "fargate"
+    },
     "volume:": {
       "mountPath": "workdir",
       "pvc": "ps-pvc"
