@@ -52,6 +52,7 @@ type Job struct {
 	Volume                  *Volume       `json:"volume"`
 	NodeSelector            *NodeSelector `json:"nodeSelector"`
 	Toleration              *Toleration   `json:"toleration"`
+	Fargate                 *Fargate      `json:"fargate"`
 }
 
 type Resources struct {
@@ -75,6 +76,11 @@ type NodeSelector struct {
 }
 
 type Toleration struct {
+	Key   string `json:"key" validate:"required"`
+	Value string `json:"value" validate:"required"`
+}
+
+type Fargate struct {
 	Key   string `json:"key" validate:"required"`
 	Value string `json:"value" validate:"required"`
 }
@@ -132,10 +138,7 @@ func (jobMsg JobMessage) getJobSpec(jobName string) *batchV1.Job {
 			ActiveDeadlineSeconds:   &jobMsg.Job.ActiveDeadlineSeconds,
 			Template: coreV1.PodTemplateSpec{
 				ObjectMeta: metaV1.ObjectMeta{
-					Labels: map[string]string{
-						"app":   jobMsg.Service,
-						"jobId": jobMsg.ID,
-					},
+					Labels: jobMsg.getLabels(),
 					Annotations: map[string]string{
 						"sidecar.istio.io/inject": "false",
 					},
@@ -145,6 +148,19 @@ func (jobMsg JobMessage) getJobSpec(jobName string) *batchV1.Job {
 			BackoffLimit: &jobMsg.Job.BackoffLimit,
 		},
 	}
+}
+
+func (jobMsg JobMessage) getLabels() map[string]string {
+	labels := map[string]string{
+		"app":   jobMsg.Service,
+		"jobId": jobMsg.ID,
+	}
+
+	if jobMsg.Job.Fargate != nil {
+		labels[jobMsg.Job.Fargate.Key] = jobMsg.Job.Fargate.Value
+	}
+
+	return labels
 }
 
 // getPodSpec generates a Kubernetes PodSpec object based on the JobMessage.
@@ -174,22 +190,8 @@ func (jobMsg JobMessage) getPodSpec() coreV1.PodSpec {
 	}
 
 	if jobMsg.Job.NodeSelector != nil {
-		podSpec.Affinity = &coreV1.Affinity{
-			NodeAffinity: &coreV1.NodeAffinity{
-				RequiredDuringSchedulingIgnoredDuringExecution: &coreV1.NodeSelector{
-					NodeSelectorTerms: []coreV1.NodeSelectorTerm{
-						{
-							MatchExpressions: []coreV1.NodeSelectorRequirement{
-								{
-									Key:      jobMsg.Job.NodeSelector.MatchKey,
-									Operator: coreV1.NodeSelectorOpIn,
-									Values:   []string{jobMsg.Job.NodeSelector.MatchValue},
-								},
-							},
-						},
-					},
-				},
-			},
+		podSpec.NodeSelector = map[string]string{
+			jobMsg.Job.NodeSelector.MatchKey: jobMsg.Job.NodeSelector.MatchValue,
 		}
 	}
 
