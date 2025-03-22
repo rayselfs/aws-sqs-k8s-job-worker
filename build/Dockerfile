@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.22 AS base
+FROM --platform=$BUILDPLATFORM golang:1.24 AS base
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ RUN go mod tidy && go mod download
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /app/main cmd/main.go
 
-FROM gcr.io/distroless/static-debian11 AS final
+FROM gcr.io/distroless/static-debian12 AS final
 
 USER nonroot:nonroot
 
