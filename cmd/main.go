@@ -9,7 +9,9 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
@@ -18,7 +20,10 @@ import (
 	"k8s.io/klog/v2"
 )
 
-var SqsActions sqs.SqsActions
+var (
+	SqsActions sqs.SqsActions
+	healthy    int32 = 1 // Atomic flag for health status (1 = healthy, 0 = unhealthy)
+)
 
 func main() {
 	if err := config.Setup(); err != nil {
@@ -32,6 +37,12 @@ func main() {
 	if err := k8s.Setup(); err != nil {
 		klog.Fatalf("unable to set k8s: %v\n", err)
 	}
+
+	http.HandleFunc("/healthz", healthHandler)
+	go func() {
+		log.Println("Starting health check server on port 8080")
+		log.Fatal(http.ListenAndServe(":8080", nil))
+	}()
 
 	id := config.Env.PodName
 	lock := k8s.GetLeaseLock(id)
@@ -73,6 +84,17 @@ func main() {
 
 	// Wait indefinitely
 	select {}
+}
+
+// Health check endpoint
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	if atomic.LoadInt32(&healthy) == 1 {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Service Unhealthy"))
+	}
 }
 
 // handleMessages handle messages in SQS
