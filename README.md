@@ -33,6 +33,7 @@
     "ttlSecondsAfterFinished": 60,
     "backoffLimit": 0,
     "activeDeadlineSeconds": 600,
+    "gpuEnable": false,
     "resources": {
       "limits": {
         "cpu": "1",

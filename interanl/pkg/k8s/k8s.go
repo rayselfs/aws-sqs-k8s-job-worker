@@ -53,6 +53,7 @@ type Job struct {
 	NodeSelector            *NodeSelector `json:"nodeSelector"`
 	Toleration              *Toleration   `json:"toleration"`
 	Fargate                 *Fargate      `json:"fargate"`
+	GpuEnable               bool          `json:"gpuEnable"`
 }
 
 type Resources struct {
@@ -132,6 +133,7 @@ func (jobMsg JobMessage) getJobSpec(jobName string) *batchV1.Job {
 		ObjectMeta: metaV1.ObjectMeta{
 			Name:      jobName,
 			Namespace: jobMsg.Job.Namespace,
+			Labels:    jobMsg.getLabels(),
 		},
 		Spec: batchV1.JobSpec{
 			TTLSecondsAfterFinished: &jobMsg.Job.TTLSecondsAfterFinished,
@@ -139,9 +141,6 @@ func (jobMsg JobMessage) getJobSpec(jobName string) *batchV1.Job {
 			Template: coreV1.PodTemplateSpec{
 				ObjectMeta: metaV1.ObjectMeta{
 					Labels: jobMsg.getLabels(),
-					Annotations: map[string]string{
-						"sidecar.istio.io/inject": "false",
-					},
 				},
 				Spec: jobMsg.getPodSpec(),
 			},
@@ -152,12 +151,12 @@ func (jobMsg JobMessage) getJobSpec(jobName string) *batchV1.Job {
 
 func (jobMsg JobMessage) getLabels() map[string]string {
 	labels := map[string]string{
-		"app":   jobMsg.Service,
-		"jobId": jobMsg.ID,
+		"app.kubernetes.io/name": jobMsg.Service,
+		"jobId":                  jobMsg.ID,
 	}
 
-	if jobMsg.Job.Fargate != nil {
-		labels[jobMsg.Job.Fargate.Key] = jobMsg.Job.Fargate.Value
+	if jobMsg.Job.GpuEnable {
+		labels["gpuType"] = "1"
 	}
 
 	return labels
@@ -205,6 +204,27 @@ func (jobMsg JobMessage) getPodSpec() coreV1.PodSpec {
 		podSpec.Tolerations = []coreV1.Toleration{toleration}
 	}
 
+	if jobMsg.Job.GpuEnable {
+		podSpec.Affinity = &coreV1.Affinity{
+			PodAntiAffinity: &coreV1.PodAntiAffinity{
+				RequiredDuringSchedulingIgnoredDuringExecution: []coreV1.PodAffinityTerm{
+					{
+						LabelSelector: &metaV1.LabelSelector{
+							MatchExpressions: []metaV1.LabelSelectorRequirement{
+								{
+									Key:      "gpuType",
+									Operator: metaV1.LabelSelectorOpIn,
+									Values:   []string{"1"},
+								},
+							},
+						},
+						TopologyKey: "kubernetes.io/hostname",
+					},
+				},
+			},
+		}
+	}
+
 	return podSpec
 }
 
@@ -215,7 +235,12 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 		Image:           jobMsg.Job.Image,
 		Command:         jobMsg.Job.Command,
 		ImagePullPolicy: coreV1.PullAlways,
-		Resources: coreV1.ResourceRequirements{
+	}
+
+	if jobMsg.Job.GpuEnable {
+		mainSpec.Resources.Limits["nvidia.com/gpu"] = resource.MustParse("1")
+	} else {
+		mainSpec.Resources = coreV1.ResourceRequirements{
 			Limits: coreV1.ResourceList{
 				"cpu":    resource.MustParse(jobMsg.Job.Resources.Limits.CPU),
 				"memory": resource.MustParse(jobMsg.Job.Resources.Limits.Memory),
@@ -224,7 +249,7 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 				"cpu":    resource.MustParse(jobMsg.Job.Resources.Requests.CPU),
 				"memory": resource.MustParse(jobMsg.Job.Resources.Requests.Memory),
 			},
-		},
+		}
 	}
 
 	if jobMsg.Job.Volume != nil {
