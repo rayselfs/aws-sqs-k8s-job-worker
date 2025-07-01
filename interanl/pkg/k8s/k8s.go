@@ -47,7 +47,7 @@ type Job struct {
 	BackoffLimit            int32         `json:"backoffLimit"`
 	Image                   string        `json:"image" validate:"required"`
 	Command                 []string      `json:"command" validate:"required"`
-	Resources               Resources     `json:"resources" validate:"required"`
+	Resources               *Resources    `json:"resources"`
 	ServiceAccount          *string       `json:"serviceAccount"`
 	Volume                  *Volume       `json:"volume"`
 	NodeSelector            *NodeSelector `json:"nodeSelector"`
@@ -239,7 +239,7 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 
 	if jobMsg.Job.GpuEnable {
 		mainSpec.Resources.Limits["nvidia.com/gpu"] = resource.MustParse("1")
-	} else {
+	} else if jobMsg.Job.Resources != nil {
 		mainSpec.Resources = coreV1.ResourceRequirements{
 			Limits: coreV1.ResourceList{
 				"cpu":    resource.MustParse(jobMsg.Job.Resources.Limits.CPU),
