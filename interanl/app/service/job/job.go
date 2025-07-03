@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	"k8s.io/klog/v2"
 
 	"aws-sqs-k8s-job-worker/config"
 	"aws-sqs-k8s-job-worker/interanl/pkg/k8s"
+	"aws-sqs-k8s-job-worker/interanl/pkg/logger"
 	"aws-sqs-k8s-job-worker/interanl/pkg/rdb"
 	"aws-sqs-k8s-job-worker/interanl/pkg/request/callback"
 
+	"go.uber.org/zap"
 	batchV1 "k8s.io/api/batch/v1"
 )
 
@@ -47,7 +48,10 @@ func Execution(record Record) {
 
 		job, errorDetail := jobMsg.ApplyJob(jobName)
 		if errorDetail != nil {
-			klog.Errorf("[%s] apply job error: %v\n", jobMsg.ID, errorDetail.Message)
+			logger.Error("apply job error",
+				zap.String("jobId", jobMsg.ID),
+				zap.String("error", errorDetail.Message),
+			)
 			requestBody.Status = k8s.StatusException
 			requestBody.Detail = map[string]interface{}{
 				"error": errorDetail,
@@ -72,7 +76,11 @@ func Execution(record Record) {
 	// check job exist
 	job, errorDetail := jobMsg.JobExists(jobName)
 	if errorDetail == nil {
-		klog.Errorf("[%s] job %s not exists in namespace %s\n", jobMsg.ID, jobName, jobMsg.Job.Namespace)
+		logger.Error("job not exists",
+			zap.String("jobId", jobMsg.ID),
+			zap.String("jobName", jobName),
+			zap.String("namespace", jobMsg.Job.Namespace),
+		)
 		requestBody.Status = k8s.StatusException
 		requestBody.Detail = map[string]interface{}{
 			"error": &callback.ErrorDetail{
@@ -111,7 +119,10 @@ func Execution(record Record) {
 	if record.Status == StatusJobDone {
 		jobStatus, errorDetail := jobMsg.CheckJobStatus(jobName)
 		if errorDetail != nil {
-			klog.Errorf("[%s] %v\n", jobMsg.ID, errorDetail.Message)
+			logger.Error("check job status error",
+				zap.String("jobId", jobMsg.ID),
+				zap.String("error", errorDetail.Message),
+			)
 			requestBody.Status = k8s.StatusException
 			requestBody.Detail = map[string]interface{}{
 				"error": errorDetail,
@@ -135,7 +146,10 @@ func GetCallbackRequest(jobMsg k8s.JobMessage) (requestBody callback.RequestBody
 func validation(jobMsg k8s.JobMessage) (int, map[string]interface{}) {
 	jobName, err := jobMsg.CheckJobName()
 	if err != nil {
-		klog.Errorf("[%s] %v\n", jobMsg.ID, err)
+		logger.Error("check job name error",
+			zap.String("jobId", jobMsg.ID),
+			zap.String("error", err.Error()),
+		)
 		return k8s.StatusException, map[string]interface{}{
 			"error": callback.ErrorDetail{
 				ErrorCode: callback.ERROR_CODE_JOB_NAME_INVALID,
@@ -145,7 +159,9 @@ func validation(jobMsg k8s.JobMessage) (int, map[string]interface{}) {
 	}
 
 	if jobMsg.Job.TTLSecondsAfterFinished < 60 {
-		klog.Errorf("[%s] job's TTLSecondsAfterFinished is less than 60 seconds \n", jobMsg.ID)
+		logger.Error("job's TTLSecondsAfterFinished is less than 60 seconds",
+			zap.String("jobId", jobMsg.ID),
+		)
 		return k8s.StatusException, map[string]interface{}{
 			"error": callback.ErrorDetail{
 				ErrorCode: callback.ERROR_CODE_JOB_TTL_SECONDS_AFTER_FINISHED_TOO_SMALL,
@@ -156,7 +172,10 @@ func validation(jobMsg k8s.JobMessage) (int, map[string]interface{}) {
 
 	_, errorDetail := jobMsg.JobExists(jobName)
 	if errorDetail != nil {
-		klog.Errorf("[%s] %v\n", jobMsg.ID, errorDetail.Message)
+		logger.Error("job not exist",
+			zap.String("jobId", jobMsg.ID),
+			zap.String("error", errorDetail.Message),
+		)
 		return k8s.StatusException, map[string]interface{}{
 			"error": errorDetail,
 		}
@@ -164,7 +183,10 @@ func validation(jobMsg k8s.JobMessage) (int, map[string]interface{}) {
 
 	errorDetail = jobMsg.CheckActiveDeadlineSeconds()
 	if errorDetail != nil {
-		klog.Errorf("[%s] %v\n", jobMsg.ID, errorDetail.Message)
+		logger.Error("check active deadline seconds error",
+			zap.String("jobId", jobMsg.ID),
+			zap.String("error", errorDetail.Message),
+		)
 		return k8s.StatusException, map[string]interface{}{
 			"error": errorDetail,
 		}
@@ -173,7 +195,9 @@ func validation(jobMsg k8s.JobMessage) (int, map[string]interface{}) {
 }
 
 func WaitPodRunning(jobMsg k8s.JobMessage, job *batchV1.Job, requestBody callback.RequestBody) int {
-	klog.Infof("[%s] %v\n", jobMsg.ID, "watching pod running")
+	logger.Info("watching pod running",
+		zap.String("jobId", jobMsg.ID),
+	)
 
 	jobStatus, detail := jobMsg.WatchPodRunning(job)
 	requestBody.Status = jobStatus
@@ -185,10 +209,15 @@ func WaitPodRunning(jobMsg k8s.JobMessage, job *batchV1.Job, requestBody callbac
 
 func WaitJobCompletion(jobMsg k8s.JobMessage, job *batchV1.Job, requestBody callback.RequestBody) int {
 	// Watch for job completion
-	klog.Infof("[%s] %v\n", jobMsg.ID, "watching job completion")
+	logger.Info("watching job completion",
+		zap.String("jobId", jobMsg.ID),
+	)
 	jobStatus, errorDetail := jobMsg.WatchJobCompletion(jobMsg.Job.Namespace, job.GetObjectMeta().GetName())
 	if errorDetail != nil {
-		klog.Errorf("[%s] %v\n", jobMsg.ID, errorDetail.Message)
+		logger.Error("watch job completion error",
+			zap.String("jobId", jobMsg.ID),
+			zap.String("error", errorDetail.Message),
+		)
 		requestBody.Status = jobStatus
 		requestBody.Detail = map[string]interface{}{
 			"error": errorDetail,
@@ -201,10 +230,15 @@ func WaitJobCompletion(jobMsg k8s.JobMessage, job *batchV1.Job, requestBody call
 
 func GetJobDurection(jobMsg k8s.JobMessage, job *batchV1.Job, jobStatus int, requestBody callback.RequestBody) {
 	// Get job duration
-	klog.Infof("[%s] %v\n", jobMsg.ID, "getting job duration")
+	logger.Info("getting job duration",
+		zap.String("jobId", jobMsg.ID),
+	)
 	duration, errorDetail := jobMsg.GetJobDuration(job.GetObjectMeta().GetName())
 	if errorDetail != nil {
-		klog.Errorf("[%s] %v\n", jobMsg.ID, errorDetail.Message)
+		logger.Error("get job duration error",
+			zap.String("jobId", jobMsg.ID),
+			zap.String("error", errorDetail.Message),
+		)
 		requestBody.Status = k8s.StatusException
 		requestBody.Detail = map[string]interface{}{
 			"error": errorDetail,
@@ -230,10 +264,16 @@ func sendCallback(jobMsg k8s.JobMessage, body callback.RequestBody) {
 	callback := body
 	resp, err := callback.Post(jobMsg.Webhook.URL)
 	if err != nil {
-		klog.Errorf("[%s] start job callback error: %v\n", jobMsg.ID, err)
+		logger.Error("start job callback error",
+			zap.String("jobId", jobMsg.ID),
+			zap.String("error", err.Error()),
+		)
 		return
 	}
 	// Print the response status.
-	klog.Infof("[%s] response status: %v\n", jobMsg.ID, resp.Status)
+	logger.Info("callback response",
+		zap.String("jobId", jobMsg.ID),
+		zap.String("status", resp.Status),
+	)
 	resp.Body.Close()
 }

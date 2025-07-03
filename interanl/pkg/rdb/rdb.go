@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"k8s.io/klog/v2"
 )
 
 var Client *redis.Client
@@ -22,7 +21,6 @@ func Setup() error {
 	_, err := Client.Ping(ctx).Result()
 
 	if err != nil {
-		klog.Errorf("ping redis cluster client err addr = %v, db = %v\n", config.Env.RedisEndpoint, config.Env.RedisDB)
 		return err
 	}
 

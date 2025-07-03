@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"k8s.io/klog/v2"
+	"aws-sqs-k8s-job-worker/interanl/pkg/logger"
+
+	"go.uber.org/zap"
 )
 
 // RequestBody represents the JSON body structure.
@@ -72,7 +74,7 @@ func (body RequestBody) Post(url string) (*http.Response, error) {
 			break
 		}
 
-		klog.Errorf("request failed: %v, retry: %v", err, attempt)
+		logger.Error("request failed", zap.Error(err), zap.Int("attempt", attempt))
 
 		// Wait for a bit before retrying.
 		time.Sleep(retryDelay)
