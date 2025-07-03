@@ -9,6 +9,7 @@
 - job.ttlSecondsAfterFinished: seconds, automatic cleanup for finished jobs, need larger than 60s
 - job.backoffLimit: specify the number of retries, set to 0
 - job.activeDeadlineSeconds: seconds, the Job runtime exceeded the specified
+- job.gpuEnable: use gpu vm
 - job.resources: cpu, memory setting
 - job.nodeSelector: job affinity with node selector
 - job.toleration: allow the scheduler to schedule pods with matching taints (node)
