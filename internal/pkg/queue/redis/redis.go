@@ -13,7 +13,7 @@ type RedisActions struct {
 	Key    string // redis list key
 }
 
-func Setup(addr, key string, db int) *RedisActions {
+func New(addr, key string, db int) *RedisActions {
 	client := redis.NewClient(&redis.Options{
 		Addr: addr,
 		DB:   db,

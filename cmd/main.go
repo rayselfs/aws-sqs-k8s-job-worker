@@ -3,12 +3,13 @@ package main
 import (
 	"aws-sqs-k8s-job-worker/config"
 	"aws-sqs-k8s-job-worker/internal/app/service/job"
+	"aws-sqs-k8s-job-worker/internal/pkg/cache"
+	redisCache "aws-sqs-k8s-job-worker/internal/pkg/cache/redis"
 	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
 	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 	"aws-sqs-k8s-job-worker/internal/pkg/queue"
 	redisQueue "aws-sqs-k8s-job-worker/internal/pkg/queue/redis"
 	"aws-sqs-k8s-job-worker/internal/pkg/queue/sqs"
-	"aws-sqs-k8s-job-worker/internal/pkg/rdb"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -28,8 +29,9 @@ import (
 )
 
 var (
-	Queue   queue.QueueClient
-	healthy int32 = 1 // Atomic flag for health status (1 = healthy, 0 = unhealthy)
+	Queue       queue.QueueClient
+	healthy     int32 = 1 // Atomic flag for health status (1 = healthy, 0 = unhealthy)
+	CacheClient cache.Client
 )
 
 func main() {
@@ -45,18 +47,16 @@ func main() {
 	// 決定使用哪個 queue backend
 	switch config.Env.QueueType {
 	case "redis":
-		Queue = redisQueue.Setup(config.Env.RedisEndpoint, config.Env.RedisJobKeyPrefix, config.Env.RedisDB)
+		Queue = redisQueue.New(config.Env.RedisEndpoint, config.Env.RedisJobKeyPrefix, config.Env.RedisDB)
 		logger.Info("Using Redis queue")
 	case "sqs":
-		Queue = sqs.Setup(config.Env.AWSSQSRegion, config.Env.AWSSQSURL)
+		Queue = sqs.New(config.Env.AWSSQSRegion, config.Env.AWSSQSURL)
 		logger.Info("Using AWS SQS queue")
 	default:
 		logger.Fatal("QUEUE_TYPE must be either 'redis' or 'sqs'", zap.String("QUEUE_TYPE", config.Env.QueueType))
 	}
 
-	if err := rdb.Setup(); err != nil {
-		logger.Fatal("unable to set redis", zap.Error(err))
-	}
+	CacheClient = redisCache.New(config.Env.RedisEndpoint, config.Env.RedisDB)
 
 	if err := k8s.Setup(); err != nil {
 		logger.Fatal("unable to set k8s", zap.Error(err))
@@ -142,7 +142,7 @@ func handleMessages() {
 
 // handleRecords handle records in redis
 func handleRecords() {
-	rdbList, err := rdb.GetByPrefix(config.Env.RedisJobKeyPrefix)
+	rdbList, err := CacheClient.GetByPrefix(config.Env.RedisJobKeyPrefix)
 	if err != nil {
 		logger.Fatal("unable to get list in redis", zap.Error(err))
 	}
@@ -181,7 +181,7 @@ func messageProcess(message types.Message) {
 		return
 	}
 
-	if _, err := rdb.Get(config.Env.RedisJobKeyPrefix + jobMsg.ID); err == nil {
+	if _, err := CacheClient.Get(config.Env.RedisJobKeyPrefix + jobMsg.ID); err == nil {
 		logger.Error("job has been executed", zap.String("jobID", jobMsg.ID))
 		Queue.DeleteMessage(message)
 		prom.MessagesFailed.Inc()
@@ -199,16 +199,16 @@ func messageProcess(message types.Message) {
 		Status:     job.StatusInit,
 	}
 	recordData, _ := json.Marshal(record)
-	rdb.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+	CacheClient.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
 
 	Queue.DeleteMessage(message)
 
 	logger.Info("start message process")
-	job.Execution(record)
+	job.Execution(record, CacheClient)
 
 	prom.MessagesProcessed.Inc()
 
-	if err := rdb.Delete(config.Env.RedisJobKeyPrefix + jobMsg.ID); err != nil {
+	if err := CacheClient.Delete(config.Env.RedisJobKeyPrefix + jobMsg.ID); err != nil {
 		logger.Error("unable to delete job from redis", zap.String("jobID", jobMsg.ID), zap.Error(err))
 	}
 }
@@ -222,9 +222,9 @@ func recordProcess(recordData string) {
 	}
 
 	logger.Info("Record received", zap.String("jobID", record.JobMessage.ID))
-	job.Execution(record)
+	job.Execution(record, CacheClient)
 
-	if err := rdb.Delete(config.Env.RedisJobKeyPrefix + record.JobMessage.ID); err != nil {
+	if err := CacheClient.Delete(config.Env.RedisJobKeyPrefix + record.JobMessage.ID); err != nil {
 		logger.Error("unable to delete job from redis", zap.String("jobID", record.JobMessage.ID), zap.Error(err))
 	}
 }

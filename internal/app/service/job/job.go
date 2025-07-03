@@ -8,9 +8,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	"aws-sqs-k8s-job-worker/config"
+	"aws-sqs-k8s-job-worker/internal/pkg/cache"
 	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
 	"aws-sqs-k8s-job-worker/internal/pkg/logger"
-	"aws-sqs-k8s-job-worker/internal/pkg/rdb"
 	"aws-sqs-k8s-job-worker/internal/pkg/request/callback"
 
 	"go.uber.org/zap"
@@ -30,7 +30,7 @@ const (
 	StatusJobDone    = 3
 )
 
-func Execution(record Record) {
+func Execution(record Record, cacheClient cache.Client) {
 	requestBody := GetCallbackRequest(record.JobMessage)
 	jobMsg := record.JobMessage
 
@@ -70,7 +70,7 @@ func Execution(record Record) {
 
 		record.Status = StatusJobCreated
 		recordData, _ := json.Marshal(record)
-		rdb.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		cacheClient.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
 	}
 
 	// check job exist
@@ -101,7 +101,7 @@ func Execution(record Record) {
 
 		record.Status = StatusPodRunning
 		recordData, _ := json.Marshal(record)
-		rdb.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, string(recordData), time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, string(recordData), time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
 	}
 
 	// process after job's pod running
@@ -113,7 +113,7 @@ func Execution(record Record) {
 
 		record.Status = StatusJobDone
 		recordData, _ := json.Marshal(record)
-		rdb.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, string(recordData), time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, string(recordData), time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
 	}
 
 	if record.Status == StatusJobDone {
@@ -277,3 +277,6 @@ func sendCallback(jobMsg k8s.JobMessage, body callback.RequestBody) {
 	)
 	resp.Body.Close()
 }
+
+// TODO: 建議將 rdb 操作包裝成 repository interface，讓 job.go 只依賴 interface，方便測試與擴充。
+// 目前直接呼叫 rdb.Set/Get/Delete，未來可考慮重構。
