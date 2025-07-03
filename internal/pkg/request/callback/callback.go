@@ -2,11 +2,13 @@ package callback
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
+	"aws-sqs-k8s-job-worker/config"
 	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 
 	"go.uber.org/zap"
@@ -44,45 +46,51 @@ func (body RequestBody) Post(url string) (*http.Response, error) {
 		return nil, err
 	}
 
-	// Create a new POST request with the JSON body.
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, err
-	}
+	// 從 config 取得 callback 參數
+	maxRetries := config.Env.CallbackMaxRetries
+	baseDelay := time.Duration(config.Env.CallbackBaseDelay) * time.Second
+	maxDelay := time.Duration(config.Env.CallbackMaxDelay) * time.Second
+	totalTimeout := time.Duration(config.Env.CallbackTotalTimeout) * time.Second
 
-	// Set the Content-Type header.
-	req.Header.Set("Content-Type", "application/json")
+	ctx, cancel := context.WithTimeout(context.Background(), totalTimeout)
+	defer cancel()
 
-	// Define the maximum number of retries and the delay between retries.
-	const maxRetries = 10
-	const retryDelay = 30 * time.Second
-
-	// Create a new HTTP client.
 	client := &http.Client{}
-
-	// Attempt the request, retrying if necessary.
 	var resp *http.Response
+	var lastErr error
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// 每次重試都建立新的 request
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+		if err != nil {
+			lastErr = err
+			break
+		}
+		req.Header.Set("Content-Type", "application/json")
+
 		resp, err = client.Do(req)
 		if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			// Successful response
 			return resp, nil
 		}
 
-		// If not successful and it's the last attempt, break and return the error.
-		if attempt == maxRetries {
+		lastErr = err
+		logger.Error("request failed", zap.Error(err), zap.Int("attempt", attempt))
+
+		// 若 context 已過期則不再重試
+		if ctx.Err() != nil {
 			break
 		}
 
-		logger.Error("request failed", zap.Error(err), zap.Int("attempt", attempt))
-
-		// Wait for a bit before retrying.
-		time.Sleep(retryDelay)
+		// 指數退避，最大不超過 maxDelay
+		delay := baseDelay << (attempt - 1)
+		if delay > maxDelay {
+			delay = maxDelay
+		}
+		time.Sleep(delay)
 	}
 
-	// If we reach here, it means all retries failed.
-	if err == nil {
-		err = errors.New("request failed after multiple attempts")
+	if lastErr == nil {
+		lastErr = errors.New("request failed after multiple attempts")
 	}
-	return resp, err
+	return resp, lastErr
 }
