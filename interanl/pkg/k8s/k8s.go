@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"sync"
 	"time"
 
 	batchV1 "k8s.io/api/batch/v1"
@@ -424,6 +425,7 @@ func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatu
 
 	// Create an Informer to watch for job status updates.
 	stopCh := make(chan struct{})
+	var once sync.Once // 保證只 close 一次
 
 	_, controller := cache.NewInformerWithOptions(cache.InformerOptions{
 		ListerWatcher: lw,
@@ -439,7 +441,7 @@ func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatu
 						ErrorCode: callback.ERROR_CODE_JOB_CAST_OBJECT_FAILED,
 						Message:   "Failed to cast obj to Job",
 					}
-					close(stopCh)
+					once.Do(func() { close(stopCh) })
 					return
 				}
 
@@ -447,8 +449,7 @@ func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatu
 					if condition.Type == batchV1.JobComplete && condition.Status == coreV1.ConditionTrue {
 						klog.Infof("[%s] Job %s succeeded\n", jobMsg.ID, jobName)
 						jobStatus = StatusJobCompleted
-						// Stop the controller
-						close(stopCh)
+						once.Do(func() { close(stopCh) })
 						return
 					} else if condition.Type == batchV1.JobFailed && condition.Status == coreV1.ConditionTrue {
 						klog.Errorf("[%s] Job %s failed\n", jobMsg.ID, jobName)
@@ -459,15 +460,12 @@ func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatu
 							ErrorCode: callback.ERROR_CODE_JOB_RUN_FAILED,
 							Message:   fmt.Sprintf("reason: %v, message: %v", condition.Reason, condition.Message),
 						}
-
 						// Delete the job
 						deletePolicy := metaV1.DeletePropagationForeground
 						_ = Clientset.BatchV1().Jobs(namespace).Delete(context.TODO(), jobName, metaV1.DeleteOptions{
 							PropagationPolicy: &deletePolicy,
 						})
-
-						// Stop the controller
-						close(stopCh)
+						once.Do(func() { close(stopCh) })
 						return
 					}
 				}
