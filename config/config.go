@@ -2,22 +2,20 @@ package config
 
 import (
 	"github.com/caarlos0/env/v11"
-	"k8s.io/klog/v2"
 )
 
 func Setup() error {
 	err := env.Parse(&Env)
 	if err != nil {
-		klog.Errorf("config parse fail, %+v\n", err)
 		return err
 	}
-
 	return nil
 }
 
 var Env EnvVariable
 
 type EnvVariable struct {
+	QueueType                string `env:"QUEUE_TYPE" envDefault:"redis"`
 	LeaderElectionLockName   string `env:"LEADER_ELECTION_LOCK_NAME" envDefault:"aws-sqs-job-worker-lock"`
 	PodName                  string `env:"POD_NAME,required"`
 	PodNamespace             string `env:"POD_NAMESPACE,required"`

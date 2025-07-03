@@ -14,6 +14,7 @@ require (
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.36.5 // indirect
+	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/fxamacker/cbor/v2 v2.8.0 // indirect
@@ -23,7 +24,13 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/prometheus/client_golang v1.22.0 // indirect
+	github.com/prometheus/client_model v0.6.1 // indirect
+	github.com/prometheus/common v0.62.0 // indirect
+	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	go.uber.org/multierr v1.10.0 // indirect
+	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.39.0 // indirect

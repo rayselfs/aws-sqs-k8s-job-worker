@@ -9,6 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"aws-sqs-k8s-job-worker/interanl/pkg/logger"
+
+	"go.uber.org/zap"
 	batchV1 "k8s.io/api/batch/v1"
 	coreV1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -19,7 +22,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
-	"k8s.io/klog/v2"
 )
 
 var Clientset *kubernetes.Clientset
@@ -274,7 +276,7 @@ func (jobMsg JobMessage) ApplyJob(jobName string) (*batchV1.Job, *callback.Error
 	namespace := jobMsg.Job.Namespace
 	jobClient := Clientset.BatchV1().Jobs(namespace)
 
-	klog.Infof("[%s] create k8s job\n", jobMsg.ID)
+	logger.Info("create k8s job", zap.String("id", jobMsg.ID))
 
 	result, err := jobClient.Create(context.TODO(), jobMsg.getJobSpec(jobName), metaV1.CreateOptions{})
 	if err != nil {
@@ -356,7 +358,7 @@ func (jobMsg JobMessage) WatchPodRunning(job *batchV1.Job) (jobStatus int, detai
 		ResyncPeriod:  0,
 		Handler: cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				klog.Infof("[%s] pod created\n", jobMsg.ID)
+				logger.Info("pod created", zap.String("id", jobMsg.ID))
 			},
 			// Watch for pod updates
 			UpdateFunc: func(oldObj, newObj interface{}) {
@@ -364,7 +366,7 @@ func (jobMsg JobMessage) WatchPodRunning(job *batchV1.Job) (jobStatus int, detai
 
 				// Check if the Pod has transitioned to the Running phase
 				if pod.Status.Phase == coreV1.PodRunning {
-					klog.Infof("[%s] pod running\n", jobMsg.ID)
+					logger.Info("pod running", zap.String("id", jobMsg.ID))
 
 					jobStatus = StatusPodRunning
 					detail = map[string]interface{}{
@@ -399,7 +401,7 @@ func (jobMsg JobMessage) getJobPods(jobName string) (*coreV1.Pod, error) {
 			LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 		})
 		if err != nil {
-			klog.Errorf("[%s] Failed to list pods: %v", jobMsg.ID, err.Error())
+			logger.Error("Failed to list pods", zap.String("id", jobMsg.ID), zap.Error(err))
 			break
 		}
 
@@ -435,7 +437,7 @@ func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatu
 			UpdateFunc: func(oldObj, newObj interface{}) {
 				job, ok := newObj.(*batchV1.Job)
 				if !ok {
-					klog.Errorf("[%s] Failed to cast obj to Job\n", jobMsg.ID)
+					logger.Error("Failed to cast obj to Job", zap.String("id", jobMsg.ID))
 					jobStatus = StatusException
 					errorContent = &callback.ErrorDetail{
 						ErrorCode: callback.ERROR_CODE_JOB_CAST_OBJECT_FAILED,
@@ -447,14 +449,14 @@ func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatu
 
 				for _, condition := range job.Status.Conditions {
 					if condition.Type == batchV1.JobComplete && condition.Status == coreV1.ConditionTrue {
-						klog.Infof("[%s] Job %s succeeded\n", jobMsg.ID, jobName)
+						logger.Info("Job succeeded", zap.String("id", jobMsg.ID), zap.String("jobName", jobName))
 						jobStatus = StatusJobCompleted
 						once.Do(func() { close(stopCh) })
 						return
 					} else if condition.Type == batchV1.JobFailed && condition.Status == coreV1.ConditionTrue {
-						klog.Errorf("[%s] Job %s failed\n", jobMsg.ID, jobName)
-						klog.Errorf("[%s] Reason: %s\n", jobMsg.ID, condition.Reason)
-						klog.Errorf("[%s] Message: %s\n", jobMsg.ID, condition.Message)
+						logger.Error("Job failed", zap.String("id", jobMsg.ID), zap.String("jobName", jobName))
+						logger.Error("Reason: "+condition.Reason, zap.String("id", jobMsg.ID))
+						logger.Error("Message: "+condition.Message, zap.String("id", jobMsg.ID))
 						jobStatus = StatusJobFailed
 						errorContent = &callback.ErrorDetail{
 							ErrorCode: callback.ERROR_CODE_JOB_RUN_FAILED,
@@ -487,7 +489,7 @@ func (jobMsg JobMessage) CheckJobStatus(jobName string) (int, *callback.ErrorDet
 	// Get the job
 	job, err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Get(context.TODO(), jobName, metaV1.GetOptions{})
 	if err != nil {
-		klog.Errorf("CheckJobStatus get job error: %v", err.Error())
+		logger.Error("CheckJobStatus get job error", zap.Error(err))
 		return 0, &callback.ErrorDetail{
 			ErrorCode: callback.ERROR_CODE_GET_JOB_FAILED,
 			Message:   fmt.Sprintf("get job error: %v", err.Error()),
@@ -507,7 +509,7 @@ func (jobMsg JobMessage) GetJobDuration(jobName string) (*time.Duration, *callba
 	// Get the job
 	job, err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Get(context.TODO(), jobName, metaV1.GetOptions{})
 	if err != nil {
-		klog.Errorf("GetJobDuration get job error: %v", err.Error())
+		logger.Error("GetJobDuration get job error", zap.Error(err))
 		return nil, &callback.ErrorDetail{
 			ErrorCode: callback.ERROR_CODE_GET_JOB_FAILED,
 			Message:   fmt.Sprintf("get job error: %v", err.Error()),
@@ -515,7 +517,7 @@ func (jobMsg JobMessage) GetJobDuration(jobName string) (*time.Duration, *callba
 	}
 
 	duration := job.Status.CompletionTime.Sub(job.Status.StartTime.Time)
-	klog.Infof("[%s] Job execution duration: %v\n", jobMsg.ID, duration)
+	logger.Info("Job execution duration", zap.String("id", jobMsg.ID), zap.Duration("duration", duration))
 	return &duration, nil
 }
 
