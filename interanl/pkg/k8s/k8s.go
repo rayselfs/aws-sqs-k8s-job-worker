@@ -238,7 +238,11 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 	}
 
 	if jobMsg.Job.GpuEnable {
-		mainSpec.Resources.Limits["nvidia.com/gpu"] = resource.MustParse("1")
+		mainSpec.Resources = coreV1.ResourceRequirements{
+			Limits: coreV1.ResourceList{
+				"nvidia.com/gpu": resource.MustParse("1"),
+			},
+		}
 	} else if jobMsg.Job.Resources != nil {
 		mainSpec.Resources = coreV1.ResourceRequirements{
 			Limits: coreV1.ResourceList{
