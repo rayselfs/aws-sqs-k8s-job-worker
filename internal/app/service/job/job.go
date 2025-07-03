@@ -8,10 +8,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	"aws-sqs-k8s-job-worker/config"
-	"aws-sqs-k8s-job-worker/interanl/pkg/k8s"
-	"aws-sqs-k8s-job-worker/interanl/pkg/logger"
-	"aws-sqs-k8s-job-worker/interanl/pkg/rdb"
-	"aws-sqs-k8s-job-worker/interanl/pkg/request/callback"
+	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
+	"aws-sqs-k8s-job-worker/internal/pkg/logger"
+	"aws-sqs-k8s-job-worker/internal/pkg/rdb"
+	"aws-sqs-k8s-job-worker/internal/pkg/request/callback"
 
 	"go.uber.org/zap"
 	batchV1 "k8s.io/api/batch/v1"

@@ -1,3 +1,53 @@
+# AWS SQS K8s Job Worker
+
+## 架構說明
+
+本專案為一個將 AWS SQS/Redis queue 與 Kubernetes Job 整合的 worker，支援領導選舉、健康檢查、Prometheus 監控與 callback。
+
+- 支援 Redis 及 AWS SQS 作為 queue backend
+- 以 Kubernetes Job 執行任務，並支援資源、節點、toleration、volume 等參數
+- 支援 webhook callback 回報任務狀態
+- 具備健康檢查與 Prometheus metrics
+- 以 leader election 機制確保同時僅一個 worker 處理 queue
+
+## 目錄結構
+
+```
+cmd/            # 入口 main.go
+config/         # 環境變數設定
+internal/       # 主要邏輯與元件
+  app/service/  # 業務邏輯
+  pkg/          # 各種共用元件 (k8s, queue, rdb, logger, prometheus, request)
+  ...
+build/          # Dockerfile 等建置相關
+example/        # 範例 yaml/json
+```
+
+## 主要環境變數
+
+| 變數名稱                      | 說明                        | 預設值/必填 |
+|------------------------------|-----------------------------|-------------|
+| QUEUE_TYPE                   | queue 類型(redis/sqs)       | redis       |
+| LEADER_ELECTION_LOCK_NAME    | leader lock 名稱            | aws-sqs-job-worker-lock |
+| POD_NAME                     | pod 名稱                    | 必填        |
+| POD_NAMESPACE                | pod namespace               | 必填        |
+| LEADER_LOCK_NAME             | leader lock 名稱            | job-worker  |
+| POLLING_INTERVAL             | queue 輪詢間隔(秒)          | 5           |
+| REDIS_ENDPOINT               | Redis 連線位址              | 必填        |
+| REDIS_DB                     | Redis DB index              | 必填        |
+| REDIS_JOB_KEY_PREFIX         | Redis job key 前綴          | job-worker- |
+| AWS_SQS_REGION               | SQS region                  | 必填        |
+| AWS_SQS_URL                  | SQS queue url               | 必填        |
+| ACTIVE_DEADLINE_SECONDS_MAX  | Job 最長執行秒數            | 86400       |
+
+## 啟動方式
+
+1. 設定好環境變數
+2. 編譯/啟動 main.go
+3. 參考 example/ 目錄下的 yaml/json
+
+---
+
 1. SQS message json body
 
 - id: unique

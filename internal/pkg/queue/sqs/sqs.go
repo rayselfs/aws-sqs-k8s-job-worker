@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
-	"aws-sqs-k8s-job-worker/interanl/pkg/logger"
+	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 
 	"go.uber.org/zap"
 )

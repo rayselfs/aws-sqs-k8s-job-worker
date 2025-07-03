@@ -2,14 +2,14 @@ package k8s
 
 import (
 	"aws-sqs-k8s-job-worker/config"
-	"aws-sqs-k8s-job-worker/interanl/pkg/request/callback"
+	"aws-sqs-k8s-job-worker/internal/pkg/request/callback"
 	"context"
 	"crypto/sha256"
 	"fmt"
 	"sync"
 	"time"
 
-	"aws-sqs-k8s-job-worker/interanl/pkg/logger"
+	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 
 	"go.uber.org/zap"
 	batchV1 "k8s.io/api/batch/v1"

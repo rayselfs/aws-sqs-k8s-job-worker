@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"aws-sqs-k8s-job-worker/interanl/pkg/logger"
+	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 
 	"go.uber.org/zap"
 )
