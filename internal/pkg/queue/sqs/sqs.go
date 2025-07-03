@@ -17,8 +17,6 @@ type SqsActions struct {
 	QueueURL  *string
 }
 
-var Actor SqsActions
-
 func Setup(region string, queueUrl string) *SqsActions {
 	// Load the Shared AWS Configuration
 	cfg, err := awsconfig.LoadDefaultConfig(context.TODO(), awsconfig.WithRegion(region))
