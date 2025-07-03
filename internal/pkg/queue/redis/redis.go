@@ -1,4 +1,4 @@
-package redisQeueu
+package redisQueue
 
 import (
 	"context"
@@ -8,20 +8,20 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type RedisQueue struct {
+type RedisActions struct {
 	Client *redis.Client
 	Key    string // redis list key
 }
 
-func Setup(addr, key string, db int) *RedisQueue {
+func Setup(addr, key string, db int) *RedisActions {
 	client := redis.NewClient(&redis.Options{
 		Addr: addr,
 		DB:   db,
 	})
-	return &RedisQueue{Client: client, Key: key}
+	return &RedisActions{Client: client, Key: key}
 }
 
-func (q *RedisQueue) GetMessages() ([]types.Message, error) {
+func (q *RedisActions) GetMessages() ([]types.Message, error) {
 	ctx := context.Background()
 	res, err := q.Client.LPop(ctx, q.Key).Result()
 	if err == redis.Nil {
@@ -37,7 +37,7 @@ func (q *RedisQueue) GetMessages() ([]types.Message, error) {
 	return []types.Message{msg}, nil
 }
 
-func (q *RedisQueue) DeleteMessage(msg types.Message) error {
+func (q *RedisActions) DeleteMessage(msg types.Message) error {
 	// LPop 已經移除，不需額外刪除
 	return nil
 }

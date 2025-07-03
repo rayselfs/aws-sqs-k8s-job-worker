@@ -6,7 +6,7 @@ import (
 	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
 	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 	"aws-sqs-k8s-job-worker/internal/pkg/queue"
-	redisQeueu "aws-sqs-k8s-job-worker/internal/pkg/queue/redis"
+	redisQueue "aws-sqs-k8s-job-worker/internal/pkg/queue/redis"
 	"aws-sqs-k8s-job-worker/internal/pkg/queue/sqs"
 	"aws-sqs-k8s-job-worker/internal/pkg/rdb"
 	"context"
@@ -45,7 +45,7 @@ func main() {
 	// 決定使用哪個 queue backend
 	switch config.Env.QueueType {
 	case "redis":
-		Queue = redisQeueu.Setup(config.Env.RedisEndpoint, "devops-job-queue", config.Env.RedisDB)
+		Queue = redisQueue.Setup(config.Env.RedisEndpoint, config.Env.RedisJobKeyPrefix, config.Env.RedisDB)
 		logger.Info("Using Redis queue")
 	case "sqs":
 		Queue = sqs.Setup(config.Env.AWSSQSRegion, config.Env.AWSSQSURL)
