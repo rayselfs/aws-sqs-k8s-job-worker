@@ -27,9 +27,9 @@ type EnvVariable struct {
 	AWSSQSRegion             string `env:"AWS_SQS_REGION,required"`
 	AWSSQSURL                string `env:"AWS_SQS_URL,required"`
 	ActiveDeadlineSecondsMax int64  `env:"ACTIVE_DEADLINE_SECONDS_MAX" envDefault:"86400"`
-	// 新增 callback 重試與 timeout 設定
-	CallbackMaxRetries   int `env:"CALLBACK_MAX_RETRIES" envDefault:"10"`
-	CallbackBaseDelay    int `env:"CALLBACK_BASE_DELAY" envDefault:"1"`     // 單位: 秒
-	CallbackMaxDelay     int `env:"CALLBACK_MAX_DELAY" envDefault:"30"`     // 單位: 秒
-	CallbackTotalTimeout int `env:"CALLBACK_TOTAL_TIMEOUT" envDefault:"60"` // 單位: 秒
+	CallbackMaxRetries       int    `env:"CALLBACK_MAX_RETRIES" envDefault:"10"`
+	CallbackBaseDelay        int    `env:"CALLBACK_BASE_DELAY" envDefault:"1"`     // seconds
+	CallbackMaxDelay         int    `env:"CALLBACK_MAX_DELAY" envDefault:"30"`     // seconds
+	CallbackTotalTimeout     int    `env:"CALLBACK_TOTAL_TIMEOUT" envDefault:"60"` // seconds
+	WorkerPoolSize           int    `env:"WORKER_POOL_SIZE" envDefault:"10"`       // worker pool size
 }
