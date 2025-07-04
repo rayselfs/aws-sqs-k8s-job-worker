@@ -3,6 +3,9 @@ package redisQueue
 import (
 	"context"
 	"encoding/json"
+	"time"
+
+	"aws-sqs-k8s-job-worker/config"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/redis/go-redis/v9"
@@ -22,19 +25,31 @@ func New(addr, key string, db int) *RedisActions {
 }
 
 func (q *RedisActions) GetMessages() ([]types.Message, error) {
-	ctx := context.Background()
-	res, err := q.Client.LPop(ctx, q.Key).Result()
-	if err == redis.Nil {
-		return nil, nil // queue empty
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var messages []types.Message
+	batch := config.Env.WorkerPoolSize
+	if batch <= 0 {
+		batch = 1
 	}
-	if err != nil {
-		return nil, err
+	for i := 0; i < batch; i++ {
+		res, err := q.Client.LPop(ctx, q.Key).Result()
+		if err == redis.Nil {
+			break // queue empty
+		}
+		if err != nil {
+			return messages, err
+		}
+		var msg types.Message
+		if err := json.Unmarshal([]byte(res), &msg); err != nil {
+			return messages, err
+		}
+		messages = append(messages, msg)
 	}
-	var msg types.Message
-	if err := json.Unmarshal([]byte(res), &msg); err != nil {
-		return nil, err
+	if len(messages) == 0 {
+		return nil, nil
 	}
-	return []types.Message{msg}, nil
+	return messages, nil
 }
 
 func (q *RedisActions) DeleteMessage(msg types.Message) error {

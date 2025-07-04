@@ -2,11 +2,13 @@ package sqs
 
 import (
 	"context"
+	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
+	"aws-sqs-k8s-job-worker/config"
 	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 
 	"go.uber.org/zap"
@@ -31,13 +33,20 @@ func New(region string, queueUrl string) *SqsActions {
 }
 
 func (a *SqsActions) GetMessages() ([]types.Message, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	var messages []types.Message
-	result, err := a.SqsClient.ReceiveMessage(context.TODO(), &sqs.ReceiveMessageInput{
+	maxNum := int32(10)
+	if config.Env.WorkerPoolSize > 0 && config.Env.WorkerPoolSize <= 10 {
+		maxNum = int32(config.Env.WorkerPoolSize)
+	}
+	result, err := a.SqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            a.QueueURL,
-		MaxNumberOfMessages: 1,
+		MaxNumberOfMessages: maxNum,
 		WaitTimeSeconds:     20,
 	})
 	if err != nil {
+		logger.Error("SQS ReceiveMessage error", zap.Error(err), zap.String("queueURL", *a.QueueURL))
 		return nil, err
 	}
 	messages = result.Messages

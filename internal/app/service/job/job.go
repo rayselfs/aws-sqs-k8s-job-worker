@@ -52,6 +52,24 @@ func Execution(record Record, cacheClient cache.Client) {
 			return
 		}
 
+		// 檢查 job 是否已存在，若存在則回傳錯誤
+		if existJob, _ := jobMsg.JobExists(jobName); existJob != nil {
+			logger.Error("job already exists",
+				zap.String("jobId", jobMsg.ID),
+				zap.String("jobName", jobName),
+				zap.String("namespace", jobMsg.Job.Namespace),
+			)
+			requestBody.Status = k8s.StatusException
+			requestBody.Detail = map[string]interface{}{
+				"error": &callback.ErrorDetail{
+					ErrorCode: callback.ERROR_CODE_JOB_EXIST_WITH_NEW_MESSAGE,
+					Message:   fmt.Sprintf("job %s already exists in namespace %s", jobName, jobMsg.Job.Namespace),
+				},
+			}
+			sendCallback(jobMsg, requestBody)
+			return
+		}
+
 		job, errorDetail := jobMsg.ApplyJob(jobName)
 		if errorDetail != nil {
 			logger.Error("apply job error",
@@ -76,12 +94,15 @@ func Execution(record Record, cacheClient cache.Client) {
 
 		record.Status = StatusJobCreated
 		recordData := marshalRecord(record)
-		cacheClient.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, recordData, time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		err := cacheClient.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, recordData, time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		if err != nil {
+			logger.Error("cache set error", zap.String("jobId", jobMsg.ID), zap.Error(err))
+		}
 	}
 
 	// check job exist
-	job, errorDetail := jobMsg.JobExists(jobName)
-	if errorDetail == nil {
+	job, _ := jobMsg.JobExists(jobName)
+	if job == nil {
 		logger.Error("job not exists",
 			zap.String("jobId", jobMsg.ID),
 			zap.String("jobName", jobName),
@@ -107,7 +128,10 @@ func Execution(record Record, cacheClient cache.Client) {
 
 		record.Status = StatusPodRunning
 		recordData := marshalRecord(record)
-		cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		err := cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		if err != nil {
+			logger.Error("cache set error", zap.String("jobId", record.JobMessage.ID), zap.Error(err))
+		}
 	}
 
 	// process after job's pod running
@@ -119,7 +143,10 @@ func Execution(record Record, cacheClient cache.Client) {
 
 		record.Status = StatusJobDone
 		recordData := marshalRecord(record)
-		cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		err := cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		if err != nil {
+			logger.Error("cache set error", zap.String("jobId", record.JobMessage.ID), zap.Error(err))
+		}
 	}
 
 	if record.Status == StatusJobDone {
@@ -259,7 +286,6 @@ func GetJobDurection(jobMsg k8s.JobMessage, job *batchV1.Job, jobStatus int, req
 		"duration": duration.Seconds(),
 	}
 	sendCallback(jobMsg, requestBody)
-	return
 }
 
 func sendCallback(jobMsg k8s.JobMessage, body callback.RequestBody) {

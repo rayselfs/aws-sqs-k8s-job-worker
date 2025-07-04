@@ -32,6 +32,7 @@ var (
 	Queue       queue.QueueClient
 	healthy     int32 = 1 // Atomic flag for health status (1 = healthy, 0 = unhealthy)
 	CacheClient cache.Client
+	validate    *validator.Validate
 )
 
 func main() {
@@ -82,8 +83,8 @@ func main() {
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				logger.Info("started leading")
-				handleRecords()
-				handleMessages()
+				go handleRecords()
+				go handleMessages()
 			},
 			OnStoppedLeading: func() {
 				logger.Info("stopped leading")
@@ -127,14 +128,28 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 // handleMessages handle messages in SQS
 func handleMessages() {
 	logger.Info("start queue polling")
+	jobs := make(chan types.Message, config.Env.WorkerPoolSize)
+	for i := 0; i < config.Env.WorkerPoolSize; i++ {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("worker panic recovered", zap.Any("error", r))
+				}
+			}()
+			for message := range jobs {
+				messageProcess(message)
+			}
+		}()
+	}
 	for {
 		messages, err := Queue.GetMessages()
 		if err != nil {
 			logger.Fatal("unable to get messages from queue", zap.Error(err))
 		}
 		if len(messages) > 0 {
-			message := messages[0]
-			go messageProcess(message)
+			for _, message := range messages {
+				jobs <- message
+			}
 		}
 		time.Sleep(time.Second * time.Duration(config.Env.PollingInterval))
 	}
@@ -148,13 +163,31 @@ func handleRecords() {
 	}
 
 	logger.Info("start record process")
+	records := make(chan string, config.Env.WorkerPoolSize)
+	for i := 0; i < config.Env.WorkerPoolSize; i++ {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("worker panic recovered", zap.Any("error", r))
+				}
+			}()
+			for data := range records {
+				recordProcess(data)
+			}
+		}()
+	}
 	for _, data := range rdbList {
-		go recordProcess(data)
+		records <- data
 	}
 }
 
 // messageProcess process message from SQS
 func messageProcess(message types.Message) {
+	cancel := func() {} // dummy for compatibility
+	if false {          // context placeholder, not used
+		_, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+	}
+	defer cancel()
 	start := time.Now()
 
 	defer func() {
@@ -173,16 +206,15 @@ func messageProcess(message types.Message) {
 		return
 	}
 
-	validator := validator.New()
-	if err := validator.Struct(jobMsg); err != nil {
-		logger.Error("job message validation failed", zap.Error(err))
+	if err := validate.Struct(jobMsg); err != nil {
+		logger.Error("job message validation failed", zap.String("jobId", jobMsg.ID), zap.String("namespace", jobMsg.Job.Namespace), zap.Error(err))
 		prom.MessagesFailed.Inc()
 		Queue.DeleteMessage(message)
 		return
 	}
 
 	if _, err := CacheClient.Get(config.Env.RedisJobKeyPrefix + jobMsg.ID); err == nil {
-		logger.Error("job has been executed", zap.String("jobID", jobMsg.ID))
+		logger.Error("job has been executed", zap.String("jobID", jobMsg.ID), zap.String("namespace", jobMsg.Job.Namespace))
 		Queue.DeleteMessage(message)
 		prom.MessagesFailed.Inc()
 		return
@@ -203,28 +235,33 @@ func messageProcess(message types.Message) {
 
 	Queue.DeleteMessage(message)
 
-	logger.Info("start message process")
+	logger.Info("start message process", zap.String("jobId", jobMsg.ID), zap.String("namespace", jobMsg.Job.Namespace))
 	job.Execution(record, CacheClient)
 
 	prom.MessagesProcessed.Inc()
 
 	if err := CacheClient.Delete(config.Env.RedisJobKeyPrefix + jobMsg.ID); err != nil {
-		logger.Error("unable to delete job from redis", zap.String("jobID", jobMsg.ID), zap.Error(err))
+		logger.Error("unable to delete job from redis", zap.String("jobID", jobMsg.ID), zap.String("namespace", jobMsg.Job.Namespace), zap.Error(err))
 	}
 }
 
 // recordProcess process message from redis
 func recordProcess(recordData string) {
+	cancel := func() {} // dummy for compatibility
+	if false {          // context placeholder, not used
+		_, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+	}
+	defer cancel()
 	var record job.Record
 	if err := json.Unmarshal([]byte(recordData), &record); err != nil {
 		logger.Error("failed to unmarshal record", zap.Error(err))
 		return
 	}
 
-	logger.Info("Record received", zap.String("jobID", record.JobMessage.ID))
+	logger.Info("Record received", zap.String("jobID", record.JobMessage.ID), zap.String("namespace", record.JobMessage.Job.Namespace))
 	job.Execution(record, CacheClient)
 
 	if err := CacheClient.Delete(config.Env.RedisJobKeyPrefix + record.JobMessage.ID); err != nil {
-		logger.Error("unable to delete job from redis", zap.String("jobID", record.JobMessage.ID), zap.Error(err))
+		logger.Error("unable to delete job from redis", zap.String("jobID", record.JobMessage.ID), zap.String("namespace", record.JobMessage.Job.Namespace), zap.Error(err))
 	}
 }

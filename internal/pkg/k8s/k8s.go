@@ -298,21 +298,14 @@ func (jobMsg JobMessage) JobExists(jobName string) (job *batchV1.Job, errorDetai
 			// Job does not exist
 			return nil, nil
 		}
-
 		// Some other error occurred
-		errorDetail = &callback.ErrorDetail{
+		return nil, &callback.ErrorDetail{
 			ErrorCode: callback.ERROR_CODE_GET_JOB_FAILED,
 			Message:   err.Error(),
 		}
-		return
 	}
-
 	// Job exists
-	errorDetail = &callback.ErrorDetail{
-		ErrorCode: callback.ERROR_CODE_JOB_EXIST_WITH_NEW_MESSAGE,
-		Message:   fmt.Sprintf("job %s already exists in namespace %s", jobName, jobMsg.Job.Namespace),
-	}
-	return
+	return job, nil
 }
 
 // CheckActiveDeadlineSeconds checks if the activeDeadlineSeconds is within the allowed range.
@@ -348,10 +341,10 @@ func (jobMsg JobMessage) WatchPodRunning(job *batchV1.Job) (jobStatus int, detai
 		fields.OneTermEqualSelector("metadata.name", pod.Name),
 	)
 
-	// Create a stopping channel
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
 	stopCh := make(chan struct{})
 
-	// Start the watch and handle the event loop
 	_, controller := cache.NewInformerWithOptions(cache.InformerOptions{
 		ListerWatcher: lw,
 		ObjectType:    &coreV1.Pod{},
@@ -360,34 +353,36 @@ func (jobMsg JobMessage) WatchPodRunning(job *batchV1.Job) (jobStatus int, detai
 			AddFunc: func(obj interface{}) {
 				logger.Info("pod created", zap.String("id", jobMsg.ID))
 			},
-			// Watch for pod updates
 			UpdateFunc: func(oldObj, newObj interface{}) {
 				pod := newObj.(*coreV1.Pod)
-
-				// Check if the Pod has transitioned to the Running phase
 				if pod.Status.Phase == coreV1.PodRunning {
 					logger.Info("pod running", zap.String("id", jobMsg.ID))
-
 					jobStatus = StatusPodRunning
 					detail = map[string]interface{}{
 						"podId":   pod.GetObjectMeta().GetUID(),
 						"podName": pod.GetObjectMeta().GetName(),
 					}
-
-					// Stop the controller
 					close(stopCh)
-					return
 				}
 			},
 		},
 	})
 
-	// Run the controller in the current thread, no background
 	go controller.Run(stopCh)
 
-	// Wait for the controller to stop.
-	<-stopCh
-
+	select {
+	case <-stopCh:
+		// 正常結束
+	case <-ctx.Done():
+		jobStatus = StatusException
+		detail = map[string]interface{}{
+			"error": &callback.ErrorDetail{
+				ErrorCode: "POD_RUNNING_TIMEOUT",
+				Message:   "Timeout waiting for pod running",
+			},
+		}
+		close(stopCh)
+	}
 	return
 }
 
@@ -415,9 +410,7 @@ func (jobMsg JobMessage) getJobPods(jobName string) (*coreV1.Pod, error) {
 	return nil, fmt.Errorf("failed to get pod for job %s", jobName)
 }
 
-// WatchJobCompletion watches for the completion or failure of a specific job.
 func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatus int, errorContent *callback.ErrorDetail) {
-	// Create a ListWatch for the job.
 	lw := cache.NewListWatchFromClient(
 		Clientset.BatchV1().RESTClient(),
 		"jobs",
@@ -425,9 +418,10 @@ func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatu
 		fields.OneTermEqualSelector("metadata.name", jobName),
 	)
 
-	// Create an Informer to watch for job status updates.
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
+	defer cancel()
 	stopCh := make(chan struct{})
-	var once sync.Once // 保證只 close 一次
+	var once sync.Once
 
 	_, controller := cache.NewInformerWithOptions(cache.InformerOptions{
 		ListerWatcher: lw,
@@ -462,7 +456,6 @@ func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatu
 							ErrorCode: callback.ERROR_CODE_JOB_RUN_FAILED,
 							Message:   fmt.Sprintf("reason: %v, message: %v", condition.Reason, condition.Message),
 						}
-						// Delete the job
 						deletePolicy := metaV1.DeletePropagationForeground
 						_ = Clientset.BatchV1().Jobs(namespace).Delete(context.TODO(), jobName, metaV1.DeleteOptions{
 							PropagationPolicy: &deletePolicy,
@@ -475,12 +468,19 @@ func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatu
 		},
 	})
 
-	// Start the controller.
 	go controller.Run(stopCh)
 
-	// Wait for the controller to stop.
-	<-stopCh
-
+	select {
+	case <-stopCh:
+		// 正常結束
+	case <-ctx.Done():
+		jobStatus = StatusException
+		errorContent = &callback.ErrorDetail{
+			ErrorCode: "JOB_COMPLETION_TIMEOUT",
+			Message:   "Timeout waiting for job completion",
+		}
+		once.Do(func() { close(stopCh) })
+	}
 	return
 }
 
@@ -515,7 +515,12 @@ func (jobMsg JobMessage) GetJobDuration(jobName string) (*time.Duration, *callba
 			Message:   fmt.Sprintf("get job error: %v", err.Error()),
 		}
 	}
-
+	if job.Status.StartTime == nil || job.Status.CompletionTime == nil {
+		return nil, &callback.ErrorDetail{
+			ErrorCode: callback.ERROR_CODE_GET_JOB_FAILED,
+			Message:   "job StartTime or CompletionTime is nil",
+		}
+	}
 	duration := job.Status.CompletionTime.Sub(job.Status.StartTime.Time)
 	logger.Info("Job execution duration", zap.String("id", jobMsg.ID), zap.Duration("duration", duration))
 	return &duration, nil
