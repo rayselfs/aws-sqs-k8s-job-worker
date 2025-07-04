@@ -341,7 +341,8 @@ func (jobMsg JobMessage) WatchPodRunning(job *batchV1.Job) (jobStatus int, detai
 		fields.OneTermEqualSelector("metadata.name", pod.Name),
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	timeout := time.Duration(config.Env.PodRunningTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
 	defer cancel()
 	stopCh := make(chan struct{})
 
@@ -382,6 +383,8 @@ func (jobMsg JobMessage) WatchPodRunning(job *batchV1.Job) (jobStatus int, detai
 			},
 		}
 		close(stopCh)
+		// 這裡可加送 alert，例如呼叫 alert webhook 或 log
+		logger.Error("Pod running timeout", zap.String("jobId", jobMsg.ID), zap.String("namespace", jobMsg.Job.Namespace))
 	}
 	return
 }
@@ -418,7 +421,11 @@ func (jobMsg JobMessage) WatchJobCompletion(namespace, jobName string) (jobStatu
 		fields.OneTermEqualSelector("metadata.name", jobName),
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
+	timeout := time.Duration(jobMsg.Job.ActiveDeadlineSeconds)
+	if timeout <= 0 {
+		timeout = 600 // fallback 預設 600 秒
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
 	defer cancel()
 	stopCh := make(chan struct{})
 	var once sync.Once
