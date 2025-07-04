@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+
 	"github.com/caarlos0/env/v11"
 )
 
@@ -9,6 +11,11 @@ func Setup() error {
 	if err != nil {
 		return err
 	}
+
+	if Env.PodRunningTimeout <= 0 {
+		return errors.New("PodRunningTimeout must be greater than 0")
+	}
+
 	return nil
 }
 
@@ -32,4 +39,5 @@ type EnvVariable struct {
 	CallbackMaxDelay         int    `env:"CALLBACK_MAX_DELAY" envDefault:"30"`     // seconds
 	CallbackTotalTimeout     int    `env:"CALLBACK_TOTAL_TIMEOUT" envDefault:"60"` // seconds
 	WorkerPoolSize           int    `env:"WORKER_POOL_SIZE" envDefault:"10"`       // worker pool size
+	PodRunningTimeout        int    `env:"POD_RUNNING_TIMEOUT" envDefault:"600"`   // 單位: 秒，預設 10 分鐘
 }

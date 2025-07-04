@@ -183,11 +183,6 @@ func handleRecords() {
 
 // messageProcess process message from SQS
 func messageProcess(message types.Message) {
-	cancel := func() {} // dummy for compatibility
-	if false {          // context placeholder, not used
-		_, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	}
-	defer cancel()
 	start := time.Now()
 
 	defer func() {
@@ -247,11 +242,6 @@ func messageProcess(message types.Message) {
 
 // recordProcess process message from redis
 func recordProcess(recordData string) {
-	cancel := func() {} // dummy for compatibility
-	if false {          // context placeholder, not used
-		_, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	}
-	defer cancel()
 	var record job.Record
 	if err := json.Unmarshal([]byte(recordData), &record); err != nil {
 		logger.Error("failed to unmarshal record", zap.Error(err))
