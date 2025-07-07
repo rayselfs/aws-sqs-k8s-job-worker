@@ -9,16 +9,12 @@ import (
 	"time"
 
 	"aws-sqs-k8s-job-worker/config"
-	"aws-sqs-k8s-job-worker/internal/pkg/logger"
-
-	"go.uber.org/zap"
 )
 
-// RequestBody represents the JSON body structure.
 type RequestBody struct {
-	ID     string                 `json:"id"`
-	Status int                    `json:"status"`
-	Detail map[string]interface{} `json:"detail"`
+	ID     string         `json:"id"`
+	Status int            `json:"status"`
+	Detail map[string]any `json:"detail"`
 }
 
 type ErrorDetail struct {
@@ -27,26 +23,22 @@ type ErrorDetail struct {
 }
 
 var (
-	ERROR_CODE_JOB_NAME_INVALID                         = "A101"
-	ERROR_CODE_JOB_EXIST_WITH_NEW_MESSAGE               = "A102"
-	ERROR_CODE_JOB_NOT_EXIST                            = "A103"
-	ERROR_CODE_GET_JOB_POD_FAILED                       = "A104"
-	ERROR_CODE_JOB_CREATE_FAILED                        = "A105"
-	ERROR_CODE_GET_JOB_FAILED                           = "A106"
-	ERROR_CODE_JOB_TTL_SECONDS_AFTER_FINISHED_TOO_SMALL = "A107"
-	ERROR_CODE_JOB_ACTIVE_DEADLINE_SECONDS_TOO_LARGE    = "A108"
-	ERROR_CODE_JOB_CAST_OBJECT_FAILED                   = "A107"
-	ERROR_CODE_JOB_RUN_FAILED                           = "A109"
+	ERROR_CODE_JOB_NAME_INVALID           = "A101"
+	ERROR_CODE_JOB_EXIST_WITH_NEW_MESSAGE = "A102"
+	ERROR_CODE_JOB_CREATE_FAILED          = "A103"
+	ERROR_CODE_JOB_POD_START_FAILED       = "A104"
+	ERROR_CODE_JOB_POD_START_TIMEOUT      = "A105"
+	ERROR_CODE_JOB_WATCH_FAILED           = "A106"
+	ERROR_CODE_JOB_GET_DETAIL_FAILED      = "A107"
+	ERROR_CODE_JOB_RUN_FAILED             = "A108"
 )
 
 func (body RequestBody) Post(url string) (*http.Response, error) {
-	// Marshal the request body to JSON.
 	jsonData, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 
-	// 從 config 取得 callback 參數
 	maxRetries := config.Env.CallbackMaxRetries
 	baseDelay := time.Duration(config.Env.CallbackBaseDelay) * time.Second
 	maxDelay := time.Duration(config.Env.CallbackMaxDelay) * time.Second
@@ -60,7 +52,6 @@ func (body RequestBody) Post(url string) (*http.Response, error) {
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		// 每次重試都建立新的 request
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 		if err != nil {
 			lastErr = err
@@ -74,18 +65,12 @@ func (body RequestBody) Post(url string) (*http.Response, error) {
 		}
 
 		lastErr = err
-		logger.Error("request failed", zap.Error(err), zap.Int("attempt", attempt))
 
-		// 若 context 已過期則不再重試
 		if ctx.Err() != nil {
 			break
 		}
 
-		// 指數退避，最大不超過 maxDelay
-		delay := baseDelay << (attempt - 1)
-		if delay > maxDelay {
-			delay = maxDelay
-		}
+		delay := min(baseDelay<<(attempt-1), maxDelay)
 		time.Sleep(delay)
 	}
 

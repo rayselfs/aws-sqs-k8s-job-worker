@@ -10,8 +10,6 @@ import (
 
 	"aws-sqs-k8s-job-worker/config"
 	"aws-sqs-k8s-job-worker/internal/pkg/logger"
-
-	"go.uber.org/zap"
 )
 
 type SqsActions struct {
@@ -23,7 +21,7 @@ func New(region string, queueUrl string) *SqsActions {
 	// Load the Shared AWS Configuration
 	cfg, err := awsconfig.LoadDefaultConfig(context.TODO(), awsconfig.WithRegion(region))
 	if err != nil {
-		logger.Fatal("unable to load AWS config", zap.Error(err))
+		logger.Fatal("unable to load AWS config")
 		return nil
 	}
 
@@ -46,7 +44,7 @@ func (a *SqsActions) GetMessages() ([]types.Message, error) {
 		WaitTimeSeconds:     20,
 	})
 	if err != nil {
-		logger.Error("SQS ReceiveMessage error", zap.Error(err), zap.String("queueURL", *a.QueueURL))
+		logger.Error("SQS ReceiveMessage error")
 		return nil, err
 	}
 	messages = result.Messages
@@ -59,7 +57,7 @@ func (a *SqsActions) DeleteMessage(msg types.Message) error {
 		ReceiptHandle: msg.ReceiptHandle,
 	})
 	if err != nil {
-		logger.Error("unable to delete message from queue", zap.String("queueURL", *a.QueueURL), zap.Error(err))
+		logger.Error("unable to delete message from queue")
 	}
 	return err
 }

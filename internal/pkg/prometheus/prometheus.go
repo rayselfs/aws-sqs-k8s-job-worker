@@ -26,7 +26,6 @@ var (
 )
 
 func Setup() {
-	// 註冊 metrics
 	prometheus.MustRegister(MessagesProcessed)
 	prometheus.MustRegister(MessagesFailed)
 	prometheus.MustRegister(MessageProcessingTime)

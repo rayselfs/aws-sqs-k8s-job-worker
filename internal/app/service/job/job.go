@@ -1,7 +1,9 @@
 package job
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,9 +14,6 @@ import (
 	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
 	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 	"aws-sqs-k8s-job-worker/internal/pkg/request/callback"
-
-	"go.uber.org/zap"
-	batchV1 "k8s.io/api/batch/v1"
 )
 
 type Record struct {
@@ -24,7 +23,7 @@ type Record struct {
 }
 
 const (
-	StatusInit       = 0
+	StatusJobInit    = 0
 	StatusJobCreated = 1
 	StatusPodRunning = 2
 	StatusJobDone    = 3
@@ -36,276 +35,178 @@ func marshalRecord(record Record) string {
 	return string(data)
 }
 
-func Execution(record Record, cacheClient cache.Client) {
-	requestBody := GetCallbackRequest(record.JobMessage)
+func Execution(record Record, cacheClient cache.Client, logCtx context.Context) {
 	jobMsg := record.JobMessage
 
-	// Start job
-	jobName, _ := jobMsg.CheckJobName()
+	// check job name
+	jobName, err := jobMsg.CheckJobName()
+	if err != nil {
+		logger.ErrorCtx(logCtx, "job name invalid: %s", err.Error())
+		sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+			"error": callback.ErrorDetail{
+				ErrorCode: callback.ERROR_CODE_JOB_NAME_INVALID,
+				Message:   err.Error(),
+			},
+		}, logCtx)
+	}
 
-	if record.Status == StatusInit {
-		status, detail := validation(jobMsg)
-		if status != 0 {
-			requestBody.Status = status
-			requestBody.Detail = detail
-			sendCallback(jobMsg, requestBody)
-			return
-		}
-
-		// 檢查 job 是否已存在，若存在則回傳錯誤
-		if existJob, _ := jobMsg.JobExists(jobName); existJob != nil {
-			logger.Error("job already exists",
-				zap.String("jobId", jobMsg.ID),
-				zap.String("jobName", jobName),
-				zap.String("namespace", jobMsg.Job.Namespace),
-			)
-			requestBody.Status = k8s.StatusException
-			requestBody.Detail = map[string]interface{}{
+	// apply job, status 0
+	if record.Status == StatusJobInit {
+		if jobMsg.JobExists(jobName) {
+			logger.ErrorCtx(logCtx, "job already exists")
+			sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
 				"error": &callback.ErrorDetail{
 					ErrorCode: callback.ERROR_CODE_JOB_EXIST_WITH_NEW_MESSAGE,
 					Message:   fmt.Sprintf("job %s already exists in namespace %s", jobName, jobMsg.Job.Namespace),
 				},
-			}
-			sendCallback(jobMsg, requestBody)
+			}, logCtx)
 			return
 		}
 
-		job, errorDetail := jobMsg.ApplyJob(jobName)
-		if errorDetail != nil {
-			logger.Error("apply job error",
-				zap.String("jobId", jobMsg.ID),
-				zap.String("error", errorDetail.Message),
-			)
-			requestBody.Status = k8s.StatusException
-			requestBody.Detail = map[string]interface{}{
-				"error": errorDetail,
-			}
-			sendCallback(jobMsg, requestBody)
+		err := jobMsg.ApplyJob(jobName)
+		if err != nil {
+			logger.ErrorCtx(logCtx, "client apply job error")
+			sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+				"error": &callback.ErrorDetail{
+					ErrorCode: callback.ERROR_CODE_JOB_CREATE_FAILED,
+					Message:   err.Error(),
+				},
+			}, logCtx)
 			return
 		}
 
-		// Send started callback
-		requestBody.Status = k8s.StatusJobCreated
-		requestBody.Detail = map[string]interface{}{
+		job, _ := jobMsg.GetJob(jobName)
+		sendCallback(jobMsg, k8s.StatusJobCreated, map[string]interface{}{
 			"jobId":   job.GetObjectMeta().GetUID(),
 			"jobName": job.GetObjectMeta().GetName(),
-		}
-		sendCallback(jobMsg, requestBody)
+		}, logCtx)
 
 		record.Status = StatusJobCreated
 		recordData := marshalRecord(record)
-		err := cacheClient.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, recordData, time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		err = cacheClient.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
 		if err != nil {
-			logger.Error("cache set error", zap.String("jobId", jobMsg.ID), zap.Error(err))
+			logger.ErrorCtx(logCtx, "cache set error")
+			return
 		}
 	}
 
-	// check job exist
-	job, _ := jobMsg.JobExists(jobName)
-	if job == nil {
-		logger.Error("job not exists",
-			zap.String("jobId", jobMsg.ID),
-			zap.String("jobName", jobName),
-			zap.String("namespace", jobMsg.Job.Namespace),
-		)
-		requestBody.Status = k8s.StatusException
-		requestBody.Detail = map[string]interface{}{
-			"error": &callback.ErrorDetail{
-				ErrorCode: callback.ERROR_CODE_JOB_NOT_EXIST,
-				Message:   fmt.Sprintf("job %s not exists in namespace %s", jobName, jobMsg.Job.Namespace),
-			},
-		}
-		sendCallback(jobMsg, requestBody)
-		return
-	}
-
-	// process after job created
+	// get job pod, status 1
 	if record.Status == StatusJobCreated {
-		status := WaitPodRunning(jobMsg, job, requestBody)
-		if status == k8s.StatusException {
+		logger.InfoCtx(logCtx, "watching pod running")
+		pod, err := jobMsg.WatchPodRunning(logCtx, jobName)
+		if err != nil {
+			errorCode := callback.ERROR_CODE_JOB_POD_START_FAILED
+			if errors.Is(err, k8s.ErrPodStartTimeout) {
+				errorCode = callback.ERROR_CODE_JOB_POD_START_TIMEOUT
+			}
+
+			logger.ErrorCtx(logCtx, "watch pod running error: %s", err.Error())
+			sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+				"error": &callback.ErrorDetail{
+					ErrorCode: errorCode,
+					Message:   err.Error(),
+				},
+			}, logCtx)
 			return
 		}
 
+		sendCallback(jobMsg, k8s.StatusPodRunning, map[string]interface{}{
+			"podId":   pod.GetObjectMeta().GetUID(),
+			"podName": pod.GetObjectMeta().GetName(),
+		}, logCtx)
+
 		record.Status = StatusPodRunning
 		recordData := marshalRecord(record)
-		err := cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		err = cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
 		if err != nil {
-			logger.Error("cache set error", zap.String("jobId", record.JobMessage.ID), zap.Error(err))
+			logger.ErrorCtx(logCtx, "cache set error")
+			return
 		}
 	}
 
-	// process after job's pod running
+	// wait job completed, status 2
 	if record.Status == StatusPodRunning {
-		status := WaitJobCompletion(jobMsg, job, requestBody)
-		if status == k8s.StatusJobFailed || status == k8s.StatusException {
+		logger.InfoCtx(logCtx, "watching job completion")
+		err := jobMsg.WatchJobCompletion(logCtx, jobName)
+		if !errors.Is(err, k8s.ErrJobFailed) {
+			sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+				"error": &callback.ErrorDetail{
+					ErrorCode: callback.ERROR_CODE_JOB_WATCH_FAILED,
+					Message:   err.Error(),
+				},
+			}, logCtx)
 			return
 		}
 
 		record.Status = StatusJobDone
 		recordData := marshalRecord(record)
-		err := cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+		err = cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
 		if err != nil {
-			logger.Error("cache set error", zap.String("jobId", record.JobMessage.ID), zap.Error(err))
+			logger.ErrorCtx(logCtx, "cache set error")
+			return
 		}
 	}
 
 	if record.Status == StatusJobDone {
-		jobStatus, errorDetail := jobMsg.CheckJobStatus(jobName)
-		if errorDetail != nil {
-			logger.Error("check job status error",
-				zap.String("jobId", jobMsg.ID),
-				zap.String("error", errorDetail.Message),
-			)
-			requestBody.Status = k8s.StatusException
-			requestBody.Detail = map[string]interface{}{
-				"error": errorDetail,
-			}
-			sendCallback(jobMsg, requestBody)
+		jobStatus, duration, err := jobMsg.GetJobDetail(jobName)
+		if err != nil {
+			logger.ErrorCtx(logCtx, "get job detail, error: %s", err.Error())
+			sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+				"error": &callback.ErrorDetail{
+					ErrorCode: callback.ERROR_CODE_JOB_GET_DETAIL_FAILED,
+					Message:   err.Error(),
+				},
+			}, logCtx)
 			return
 		}
 
-		GetJobDurection(jobMsg, job, jobStatus, requestBody)
+		if jobStatus == k8s.StatusJobFailed {
+			jobFailureDetail, err := jobMsg.GetJobFailureDetail(jobName)
+			if err != nil {
+				logger.ErrorCtx(logCtx, "get job failure detail error: %s", err.Error())
+				sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+					"error": &callback.ErrorDetail{
+						ErrorCode: callback.ERROR_CODE_JOB_GET_DETAIL_FAILED,
+						Message:   err.Error(),
+					},
+				}, logCtx)
+				return
+			}
+
+			jobFailureString, _ := json.Marshal(jobFailureDetail)
+			logger.WarnCtx(logCtx, "job failed, issue detail: %s", string(jobFailureString))
+			sendCallback(jobMsg, jobStatus, map[string]interface{}{
+				"error": &callback.ErrorDetail{
+					ErrorCode: callback.ERROR_CODE_JOB_RUN_FAILED,
+					Message:   string(jobFailureString),
+				},
+			}, logCtx)
+		}
+
+		logger.InfoCtx(logCtx, "getting job detail, status: %d, duration: %d", jobStatus, duration.Seconds())
+		sendCallback(jobMsg, jobStatus, map[string]interface{}{
+			"duration": duration.Seconds(),
+		}, logCtx)
 	}
 }
 
-func GetCallbackRequest(jobMsg k8s.JobMessage) (requestBody callback.RequestBody) {
-	requestBody = callback.RequestBody{
-		ID: jobMsg.ID,
-	}
-	return
-}
-
-// validation validates the job
-func validation(jobMsg k8s.JobMessage) (int, map[string]interface{}) {
-	jobName, err := jobMsg.CheckJobName()
-	if err != nil {
-		logger.Error("check job name error",
-			zap.String("jobId", jobMsg.ID),
-			zap.String("error", err.Error()),
-		)
-		return k8s.StatusException, map[string]interface{}{
-			"error": callback.ErrorDetail{
-				ErrorCode: callback.ERROR_CODE_JOB_NAME_INVALID,
-				Message:   err.Error(),
-			},
-		}
-	}
-
-	if jobMsg.Job.TTLSecondsAfterFinished < 60 {
-		logger.Error("job's TTLSecondsAfterFinished is less than 60 seconds",
-			zap.String("jobId", jobMsg.ID),
-		)
-		return k8s.StatusException, map[string]interface{}{
-			"error": callback.ErrorDetail{
-				ErrorCode: callback.ERROR_CODE_JOB_TTL_SECONDS_AFTER_FINISHED_TOO_SMALL,
-				Message:   "job's TTLSecondsAfterFinished is less than 60 seconds",
-			},
-		}
-	}
-
-	_, errorDetail := jobMsg.JobExists(jobName)
-	if errorDetail != nil {
-		logger.Error("job not exist",
-			zap.String("jobId", jobMsg.ID),
-			zap.String("error", errorDetail.Message),
-		)
-		return k8s.StatusException, map[string]interface{}{
-			"error": errorDetail,
-		}
-	}
-
-	errorDetail = jobMsg.CheckActiveDeadlineSeconds()
-	if errorDetail != nil {
-		logger.Error("check active deadline seconds error",
-			zap.String("jobId", jobMsg.ID),
-			zap.String("error", errorDetail.Message),
-		)
-		return k8s.StatusException, map[string]interface{}{
-			"error": errorDetail,
-		}
-	}
-	return 0, nil
-}
-
-func WaitPodRunning(jobMsg k8s.JobMessage, job *batchV1.Job, requestBody callback.RequestBody) int {
-	logger.Info("watching pod running",
-		zap.String("jobId", jobMsg.ID),
-	)
-
-	jobStatus, detail := jobMsg.WatchPodRunning(job)
-	requestBody.Status = jobStatus
-	requestBody.Detail = detail
-	sendCallback(jobMsg, requestBody)
-
-	return requestBody.Status
-}
-
-func WaitJobCompletion(jobMsg k8s.JobMessage, job *batchV1.Job, requestBody callback.RequestBody) int {
-	// Watch for job completion
-	logger.Info("watching job completion",
-		zap.String("jobId", jobMsg.ID),
-	)
-	jobStatus, errorDetail := jobMsg.WatchJobCompletion(jobMsg.Job.Namespace, job.GetObjectMeta().GetName())
-	if errorDetail != nil {
-		logger.Error("watch job completion error",
-			zap.String("jobId", jobMsg.ID),
-			zap.String("error", errorDetail.Message),
-		)
-		requestBody.Status = jobStatus
-		requestBody.Detail = map[string]interface{}{
-			"error": errorDetail,
-		}
-		sendCallback(jobMsg, requestBody)
-	}
-
-	return requestBody.Status
-}
-
-func GetJobDurection(jobMsg k8s.JobMessage, job *batchV1.Job, jobStatus int, requestBody callback.RequestBody) {
-	// Get job duration
-	logger.Info("getting job duration",
-		zap.String("jobId", jobMsg.ID),
-	)
-	duration, errorDetail := jobMsg.GetJobDuration(job.GetObjectMeta().GetName())
-	if errorDetail != nil {
-		logger.Error("get job duration error",
-			zap.String("jobId", jobMsg.ID),
-			zap.String("error", errorDetail.Message),
-		)
-		requestBody.Status = k8s.StatusException
-		requestBody.Detail = map[string]interface{}{
-			"error": errorDetail,
-		}
-		sendCallback(jobMsg, requestBody)
-		return
-	}
-
-	// Send finished callback
-	requestBody.Status = jobStatus
-	requestBody.Detail = map[string]interface{}{
-		"duration": duration.Seconds(),
-	}
-	sendCallback(jobMsg, requestBody)
-}
-
-func sendCallback(jobMsg k8s.JobMessage, body callback.RequestBody) {
+func sendCallback(jobMsg k8s.JobMessage, status int, detail map[string]interface{}, logCtx context.Context) {
 	if jobMsg.Webhook == nil {
 		return
 	}
 
-	callback := body
-	resp, err := callback.Post(jobMsg.Webhook.URL)
+	requestBody := callback.RequestBody{
+		ID:     jobMsg.ID,
+		Status: status,
+		Detail: detail,
+	}
+
+	resp, err := requestBody.Post(jobMsg.Webhook.URL)
 	if err != nil {
-		logger.Error("start job callback error",
-			zap.String("jobId", jobMsg.ID),
-			zap.String("error", err.Error()),
-		)
+		logger.ErrorCtx(logCtx, "start job callback error")
 		return
 	}
 	// Print the response status.
-	logger.Info("callback response",
-		zap.String("jobId", jobMsg.ID),
-		zap.String("status", resp.Status),
-	)
+	logger.InfoCtx(logCtx, "callback response")
 	resp.Body.Close()
 }
