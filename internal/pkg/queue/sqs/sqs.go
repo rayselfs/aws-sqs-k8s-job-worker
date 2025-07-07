@@ -33,14 +33,11 @@ func (a *SqsActions) GetMessages() ([]types.Message, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var messages []types.Message
-	maxNum := int32(10)
-	if config.Env.WorkerPoolSize > 0 && config.Env.WorkerPoolSize <= 10 {
-		maxNum = int32(config.Env.WorkerPoolSize)
-	}
+
 	result, err := a.SqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            a.QueueURL,
-		MaxNumberOfMessages: maxNum,
-		WaitTimeSeconds:     20,
+		MaxNumberOfMessages: config.Env.QueueWorkerPoolSize,
+		WaitTimeSeconds:     config.Env.QueueAwsSqsWaitTimeSeconds,
 	})
 	if err != nil {
 		logger.Error("SQS ReceiveMessage error")

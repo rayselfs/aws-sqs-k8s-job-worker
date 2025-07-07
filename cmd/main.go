@@ -128,8 +128,8 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 // handleMessages handle messages in SQS
 func handleMessages() {
 	logger.Info("start queue polling")
-	jobs := make(chan types.Message, config.Env.WorkerPoolSize)
-	for i := 0; i < config.Env.WorkerPoolSize; i++ {
+	jobs := make(chan types.Message, config.Env.QueueWorkerPoolSize)
+	for i := 0; i < int(config.Env.QueueWorkerPoolSize); i++ {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -165,8 +165,8 @@ func handleRecords() {
 	}
 
 	logger.Info("start record process")
-	records := make(chan string, config.Env.WorkerPoolSize)
-	for i := 0; i < config.Env.WorkerPoolSize; i++ {
+	records := make(chan string, config.Env.QueueWorkerPoolSize)
+	for i := 0; i < int(config.Env.QueueWorkerPoolSize); i++ {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {

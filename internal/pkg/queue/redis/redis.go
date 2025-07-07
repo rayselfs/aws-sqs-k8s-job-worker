@@ -25,17 +25,16 @@ func New(addr, key string, db int) *RedisActions {
 }
 
 func (q *RedisActions) GetMessages() ([]types.Message, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	var messages []types.Message
-	batch := config.Env.WorkerPoolSize
-	if batch <= 0 {
-		batch = 1
-	}
-	for i := 0; i < batch; i++ {
+
+	for i := 0; i < int(config.Env.QueueWorkerPoolSize); i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.Env.QueueRedisWaitTimeout)*time.Second)
+
 		res, err := q.Client.LPop(ctx, q.Key).Result()
+		cancel()
+
 		if err == redis.Nil {
-			break // queue empty
+			break
 		}
 		if err != nil {
 			return messages, err
@@ -46,6 +45,7 @@ func (q *RedisActions) GetMessages() ([]types.Message, error) {
 		}
 		messages = append(messages, msg)
 	}
+
 	if len(messages) == 0 {
 		return nil, nil
 	}
@@ -53,6 +53,6 @@ func (q *RedisActions) GetMessages() ([]types.Message, error) {
 }
 
 func (q *RedisActions) DeleteMessage(msg types.Message) error {
-	// LPop 已經移除，不需額外刪除
+	// LPop already removed, no need to delete
 	return nil
 }
