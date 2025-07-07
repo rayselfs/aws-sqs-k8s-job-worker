@@ -29,7 +29,7 @@ func (r *redisRepository) Get(key string) (string, error) {
 	return r.client.Get(ctx, key).Result()
 }
 
-func (r *redisRepository) Set(key string, value interface{}, expiration time.Duration) error {
+func (r *redisRepository) Set(key string, value any, expiration time.Duration) error {
 	return r.client.Set(ctx, key, value, expiration).Err()
 }
 

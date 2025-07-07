@@ -341,10 +341,10 @@ func (jobMsg JobMessage) WatchPodRunning(logCtx context.Context, jobName string)
 		ObjectType:    &coreV1.Pod{},
 		ResyncPeriod:  0,
 		Handler: cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
+			AddFunc: func(obj any) {
 				logger.InfoCtx(logCtx, "pod created: %s", obj.(*coreV1.Pod).GetName())
 			},
-			UpdateFunc: func(oldObj, newObj interface{}) {
+			UpdateFunc: func(oldObj, newObj any) {
 				pod := newObj.(*coreV1.Pod)
 				if pod.Status.Phase == coreV1.PodRunning {
 					logger.InfoCtx(logCtx, "pod running")
@@ -419,7 +419,7 @@ func (jobMsg JobMessage) WatchJobCompletion(logCtx context.Context, jobName stri
 		ObjectType:    &batchV1.Job{},
 		ResyncPeriod:  0,
 		Handler: cache.ResourceEventHandlerFuncs{
-			UpdateFunc: func(oldObj, newObj interface{}) {
+			UpdateFunc: func(oldObj, newObj any) {
 				job := newObj.(*batchV1.Job)
 				for _, condition := range job.Status.Conditions {
 					if condition.Type == batchV1.JobComplete && condition.Status == coreV1.ConditionTrue {
