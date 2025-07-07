@@ -46,17 +46,17 @@ func main() {
 	// Initialize queue
 	switch config.Env.QueueType {
 	case "redis":
-		Queue = redisQueue.New(config.Env.RedisEndpoint, config.Env.RedisJobKeyPrefix, config.Env.RedisDB)
+		Queue = redisQueue.New(config.Env.QueueRedisEndpoint, config.Env.QueueRedisKeyPrefix, config.Env.QueueRedisDB)
 		logger.Info("Using Redis queue")
 	case "sqs":
-		Queue = sqs.New(config.Env.AWSSQSRegion, config.Env.AWSSQSURL)
+		Queue = sqs.New(config.Env.QueueAwsSqs, config.Env.QueueAwsSqsUrl)
 		logger.Info("Using AWS SQS queue")
 	default:
 		logger.Fatal("QUEUE_TYPE must be 'redis', 'sqs'")
 	}
 
 	// Initialize cache
-	CacheClient = redisCache.New(config.Env.RedisEndpoint, config.Env.RedisDB)
+	CacheClient = redisCache.New(config.Env.CacheRedisEndpoint, config.Env.CacheRedisDB)
 
 	// Initialize k8s client
 	if err := k8s.Setup(); err != nil {
@@ -153,7 +153,7 @@ func handleMessages() {
 
 // handleRecords handle records in redis
 func handleRecords() {
-	rdbList, err := CacheClient.GetByPrefix(config.Env.RedisJobKeyPrefix)
+	rdbList, err := CacheClient.GetByPrefix(config.Env.CacheJobKeyPrefix)
 	if err != nil {
 		logger.Fatal("unable to get list in redis, error: %s", err.Error())
 	}
@@ -206,7 +206,7 @@ func messageProcess(message types.Message) {
 
 	ctx := logger.WithTraceID(context.Background(), jobMsg.ID)
 
-	if _, err := CacheClient.Get(config.Env.RedisJobKeyPrefix + jobMsg.ID); err == nil {
+	if _, err := CacheClient.Get(config.Env.CacheJobKeyPrefix + jobMsg.ID); err == nil {
 		logger.Error("job has been executed")
 		Queue.DeleteMessage(message)
 		prom.MessagesFailed.Inc()
@@ -220,7 +220,7 @@ func messageProcess(message types.Message) {
 	}
 
 	recordData, _ := json.Marshal(record)
-	CacheClient.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
+	CacheClient.Set(config.Env.CacheJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
 
 	Queue.DeleteMessage(message)
 
@@ -229,7 +229,7 @@ func messageProcess(message types.Message) {
 
 	prom.MessagesProcessed.Inc()
 
-	if err := CacheClient.Delete(config.Env.RedisJobKeyPrefix + jobMsg.ID); err != nil {
+	if err := CacheClient.Delete(config.Env.CacheJobKeyPrefix + jobMsg.ID); err != nil {
 		logger.ErrorCtx(ctx, "unable to delete job from redis")
 	}
 }
@@ -246,7 +246,7 @@ func recordProcess(recordData string) {
 
 	job.Execution(record, CacheClient, ctx)
 
-	if err := CacheClient.Delete(config.Env.RedisJobKeyPrefix + record.JobMessage.ID); err != nil {
+	if err := CacheClient.Delete(config.Env.CacheJobKeyPrefix + record.JobMessage.ID); err != nil {
 		logger.ErrorCtx(ctx, "unable to delete job from redis")
 	}
 }
