@@ -13,10 +13,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
-	"sync/atomic"
 	"time"
 
 	prom "aws-sqs-k8s-job-worker/internal/pkg/prometheus"
@@ -24,28 +22,28 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/go-playground/validator/v10"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.uber.org/zap"
 	"k8s.io/client-go/tools/leaderelection"
 )
 
 var (
 	Queue       queue.QueueClient
-	healthy     int32 = 1 // Atomic flag for health status (1 = healthy, 0 = unhealthy)
 	CacheClient cache.Client
 	validate    *validator.Validate
 )
 
 func main() {
 	var err error
+	// Initialize logger
 	if err := logger.Setup(); err != nil {
-		panic(fmt.Sprintf("unable to initialize logger: %v", err))
+		panic(fmt.Sprintf("unable to initialize logger: %s", err))
 	}
 
+	// Initialize config
 	if err := config.Setup(); err != nil {
-		logger.Fatal("unable to set config", zap.Error(err))
+		logger.Fatal("unable to set config: %s", err.Error())
 	}
 
-	// 決定使用哪個 queue backend
+	// Initialize queue
 	switch config.Env.QueueType {
 	case "redis":
 		Queue = redisQueue.New(config.Env.RedisEndpoint, config.Env.RedisJobKeyPrefix, config.Env.RedisDB)
@@ -54,13 +52,15 @@ func main() {
 		Queue = sqs.New(config.Env.AWSSQSRegion, config.Env.AWSSQSURL)
 		logger.Info("Using AWS SQS queue")
 	default:
-		logger.Fatal("QUEUE_TYPE must be either 'redis' or 'sqs'", zap.String("QUEUE_TYPE", config.Env.QueueType))
+		logger.Fatal("QUEUE_TYPE must be 'redis', 'sqs'")
 	}
 
+	// Initialize cache
 	CacheClient = redisCache.New(config.Env.RedisEndpoint, config.Env.RedisDB)
 
+	// Initialize k8s client
 	if err := k8s.Setup(); err != nil {
-		logger.Fatal("unable to set k8s", zap.Error(err))
+		logger.Fatal("unable to set k8s, error: %s", err.Error())
 	}
 
 	prom.Setup()
@@ -68,12 +68,12 @@ func main() {
 	http.HandleFunc("/healthz", healthHandler)
 	http.Handle("/metrics", promhttp.Handler())
 	go func() {
-		logger.Info("Starting health check server", zap.String("port", "8080"))
-		log.Fatal(http.ListenAndServe(":8080", nil))
+		logger.Info("Starting health check server, listening on :8080")
+		http.ListenAndServe(":8080", nil)
 	}()
 
-	id := config.Env.PodName
-	lock := k8s.GetLeaseLock(id)
+	electorLockIdentity := config.Env.PodName
+	lock := k8s.GetLeaseLock(electorLockIdentity)
 
 	leaderElectorConfig := leaderelection.LeaderElectionConfig{
 		Lock:          lock,
@@ -91,10 +91,10 @@ func main() {
 				os.Exit(0)
 			},
 			OnNewLeader: func(identity string) {
-				if identity == id {
+				if identity == electorLockIdentity {
 					logger.Info("current New leader")
 				} else {
-					logger.Info("new leader elected", zap.String("identity", identity))
+					logger.Info("new leader elected, identity: %s", identity)
 				}
 			},
 		},
@@ -102,7 +102,7 @@ func main() {
 
 	elector, err := leaderelection.NewLeaderElector(leaderElectorConfig)
 	if err != nil {
-		logger.Fatal("error creating leader elector", zap.Error(err))
+		logger.Fatal("error creating leader elector, error: %s", err.Error())
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,13 +116,8 @@ func main() {
 
 // Health check endpoint
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-	if atomic.LoadInt32(&healthy) == 1 {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	} else {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Service Unhealthy"))
-	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }
 
 // handleMessages handle messages in SQS
@@ -133,7 +128,7 @@ func handleMessages() {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					logger.Error("worker panic recovered", zap.Any("error", r))
+					logger.Error("worker panic recovered, error: %v", r)
 				}
 			}()
 			for message := range jobs {
@@ -141,10 +136,11 @@ func handleMessages() {
 			}
 		}()
 	}
+
 	for {
 		messages, err := Queue.GetMessages()
 		if err != nil {
-			logger.Fatal("unable to get messages from queue", zap.Error(err))
+			logger.Fatal("unable to get messages from queue, error: %s", err.Error())
 		}
 		if len(messages) > 0 {
 			for _, message := range messages {
@@ -159,7 +155,7 @@ func handleMessages() {
 func handleRecords() {
 	rdbList, err := CacheClient.GetByPrefix(config.Env.RedisJobKeyPrefix)
 	if err != nil {
-		logger.Fatal("unable to get list in redis", zap.Error(err))
+		logger.Fatal("unable to get list in redis, error: %s", err.Error())
 	}
 
 	logger.Info("start record process")
@@ -168,7 +164,7 @@ func handleRecords() {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					logger.Error("worker panic recovered", zap.Any("error", r))
+					logger.Error("worker panic recovered, error: %v", r)
 				}
 			}()
 			for data := range records {
@@ -190,53 +186,51 @@ func messageProcess(message types.Message) {
 		prom.MessageProcessingTime.Observe(duration)
 	}()
 
-	logger.Info("message received", zap.String("id", *message.MessageId))
-	logger.Info("message body", zap.String("body", *message.Body))
+	logger.Info("message id: %s", *message.MessageId)
+	logger.Info("message body: %s", *message.Body)
 
 	var jobMsg k8s.JobMessage
 	if err := json.Unmarshal([]byte(*message.Body), &jobMsg); err != nil {
-		logger.Error("failed to unmarshal job message", zap.Error(err))
+		logger.Error("failed to unmarshal job message, error: %s", err.Error())
 		prom.MessagesFailed.Inc()
 		Queue.DeleteMessage(message)
 		return
 	}
 
 	if err := validate.Struct(jobMsg); err != nil {
-		logger.Error("job message validation failed", zap.String("jobId", jobMsg.ID), zap.String("namespace", jobMsg.Job.Namespace), zap.Error(err))
+		logger.Error("job message validation failed, error: %s", err.Error())
 		prom.MessagesFailed.Inc()
 		Queue.DeleteMessage(message)
 		return
 	}
+
+	ctx := logger.WithTraceID(context.Background(), jobMsg.ID)
 
 	if _, err := CacheClient.Get(config.Env.RedisJobKeyPrefix + jobMsg.ID); err == nil {
-		logger.Error("job has been executed", zap.String("jobID", jobMsg.ID), zap.String("namespace", jobMsg.Job.Namespace))
+		logger.Error("job has been executed")
 		Queue.DeleteMessage(message)
 		prom.MessagesFailed.Inc()
 		return
-	}
-
-	jobMsg.Job.BackoffLimit = 0
-	if jobMsg.Job.TTLSecondsAfterFinished == 0 {
-		jobMsg.Job.TTLSecondsAfterFinished = 60
 	}
 
 	record := job.Record{
 		SQSMessage: message,
 		JobMessage: jobMsg,
-		Status:     job.StatusInit,
+		Status:     job.StatusJobInit,
 	}
+
 	recordData, _ := json.Marshal(record)
-	CacheClient.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
+	CacheClient.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
 
 	Queue.DeleteMessage(message)
 
-	logger.Info("start message process", zap.String("jobId", jobMsg.ID), zap.String("namespace", jobMsg.Job.Namespace))
-	job.Execution(record, CacheClient)
+	logger.InfoCtx(ctx, "start message process")
+	job.Execution(record, CacheClient, ctx)
 
 	prom.MessagesProcessed.Inc()
 
 	if err := CacheClient.Delete(config.Env.RedisJobKeyPrefix + jobMsg.ID); err != nil {
-		logger.Error("unable to delete job from redis", zap.String("jobID", jobMsg.ID), zap.String("namespace", jobMsg.Job.Namespace), zap.Error(err))
+		logger.ErrorCtx(ctx, "unable to delete job from redis")
 	}
 }
 
@@ -244,14 +238,15 @@ func messageProcess(message types.Message) {
 func recordProcess(recordData string) {
 	var record job.Record
 	if err := json.Unmarshal([]byte(recordData), &record); err != nil {
-		logger.Error("failed to unmarshal record", zap.Error(err))
+		logger.Error("failed to unmarshal record, error: %v", err)
 		return
 	}
 
-	logger.Info("Record received", zap.String("jobID", record.JobMessage.ID), zap.String("namespace", record.JobMessage.Job.Namespace))
-	job.Execution(record, CacheClient)
+	ctx := logger.WithTraceID(context.Background(), record.JobMessage.ID)
+
+	job.Execution(record, CacheClient, ctx)
 
 	if err := CacheClient.Delete(config.Env.RedisJobKeyPrefix + record.JobMessage.ID); err != nil {
-		logger.Error("unable to delete job from redis", zap.String("jobID", record.JobMessage.ID), zap.String("namespace", record.JobMessage.Job.Namespace), zap.Error(err))
+		logger.ErrorCtx(ctx, "unable to delete job from redis")
 	}
 }
