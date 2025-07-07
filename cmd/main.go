@@ -1,5 +1,9 @@
 package main
 
+// Main entry point for the AWS SQS K8s Job Worker.
+// Initializes logger, config, k8s client, queue, cache, Prometheus, validator, HTTP server, and leader election.
+// Handles message and record processing from SQS/Redis queues and manages job execution lifecycle.
+
 import (
 	"aws-sqs-k8s-job-worker/config"
 	"aws-sqs-k8s-job-worker/internal/app/service/job"
@@ -26,11 +30,12 @@ import (
 )
 
 var (
-	Queue       queue.QueueClient
-	CacheClient cache.Client
-	validate    *validator.Validate
+	Queue       queue.QueueClient   // Queue client (SQS or Redis)
+	CacheClient cache.Client        // Cache client (Redis)
+	validate    *validator.Validate // Validator for job messages
 )
 
+// main initializes all components and starts the worker.
 func main() {
 	var err error
 	// Initialize logger
@@ -125,7 +130,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-// handleMessages handle messages in SQS
+// handleMessages polls the queue (SQS/Redis) and dispatches messages to worker goroutines for processing.
 func handleMessages() {
 	logger.Info("start queue polling")
 	jobs := make(chan types.Message, config.Env.QueueWorkerPoolSize)
@@ -156,7 +161,7 @@ func handleMessages() {
 	}
 }
 
-// handleRecords handle records in redis
+// handleRecords processes job records from Redis for recovery or retry.
 func handleRecords() {
 	rdbList, err := CacheClient.GetByPrefix(config.Env.CacheJobKeyPrefix)
 	if err != nil {
@@ -183,7 +188,7 @@ func handleRecords() {
 	}
 }
 
-// messageProcess process message from SQS
+// messageProcess unmarshals and validates a message from SQS, then creates a job record for processing.
 func messageProcess(message types.Message) {
 	var jobMsg k8s.JobMessage
 	if err := json.Unmarshal([]byte(*message.Body), &jobMsg); err != nil {
@@ -201,7 +206,7 @@ func messageProcess(message types.Message) {
 	processRecord(record, true)
 }
 
-// recordProcess process message from redis
+// recordProcess unmarshals and processes a job record from Redis.
 func recordProcess(recordData string) {
 	var record job.Record
 	if err := json.Unmarshal([]byte(recordData), &record); err != nil {
@@ -211,7 +216,7 @@ func recordProcess(recordData string) {
 	processRecord(record, false)
 }
 
-// processRecord 處理共用邏輯
+// processRecord contains the shared logic for processing both SQS and Redis job records, including validation, deduplication, and job execution.
 func processRecord(record job.Record, fromSQS bool) {
 	start := time.Now()
 	defer func() {

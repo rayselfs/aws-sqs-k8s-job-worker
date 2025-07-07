@@ -16,6 +16,7 @@ import (
 	"aws-sqs-k8s-job-worker/internal/pkg/request/callback"
 )
 
+// Record holds a job record including SQS message, job message, and status.
 type Record struct {
 	SQSMessage types.Message  `json:"sqsMessage"`
 	JobMessage k8s.JobMessage `json:"jobMessage"`
@@ -23,18 +24,22 @@ type Record struct {
 }
 
 const (
-	StatusJobInit    = 0
-	StatusJobCreated = 1
-	StatusPodRunning = 2
-	StatusJobDone    = 3
+	StatusJobInit    = 0 // Initial state
+	StatusJobCreated = 1 // Job created
+	StatusPodRunning = 2 // Pod running
+	StatusJobDone    = 3 // Job completed
 )
 
-// marshalRecord marshals a Record to JSON string (utility function for DRY).
+// marshalRecord marshals a Record to a JSON string.
 func marshalRecord(record Record) string {
 	data, _ := json.Marshal(record)
 	return string(data)
 }
 
+// Execution is the main workflow for job execution, including validation, creation, monitoring, and callback.
+// record: job execution record
+// cacheClient: cache client
+// logCtx: context for logging
 func Execution(record Record, cacheClient cache.Client, logCtx context.Context) {
 	jobMsg := record.JobMessage
 
@@ -191,6 +196,11 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 	}
 }
 
+// sendCallback sends a callback to the specified webhook.
+// jobMsg: job message
+// status: status code
+// detail: callback details
+// logCtx: context for logging
 func sendCallback(jobMsg k8s.JobMessage, status int, detail map[string]any, logCtx context.Context) {
 	if jobMsg.Webhook == nil {
 		return

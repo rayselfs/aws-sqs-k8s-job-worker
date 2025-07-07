@@ -9,34 +9,38 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// logger is the global slog.Logger instance.
 var logger *slog.Logger
 
 const (
-	TraceIDKey = "traceid"
-	SpanIDKey  = "spanid"
+	TraceIDKey = "traceid" // Key for trace ID in logs
+	SpanIDKey  = "spanid"  // Key for span ID in logs
 )
 
 type ctxKey string
 
 const (
-	ctxTraceID ctxKey = "traceid"
-	ctxSpanID  ctxKey = "spanid"
+	ctxTraceID ctxKey = "traceid" // Context key for trace ID
+	ctxSpanID  ctxKey = "spanid"  // Context key for span ID
 )
 
+// Setup initializes the global logger with JSON handler.
 func Setup() error {
 	logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	return nil
 }
 
-// Context helpers
+// WithTraceID returns a new context with the given trace ID.
 func WithTraceID(ctx context.Context, traceID string) context.Context {
 	return context.WithValue(ctx, ctxTraceID, traceID)
 }
 
+// WithSpanID returns a new context with the given span ID.
 func WithSpanID(ctx context.Context, spanID string) context.Context {
 	return context.WithValue(ctx, ctxSpanID, spanID)
 }
 
+// TraceIDFromContext extracts the trace ID from context or OpenTelemetry span.
 func TraceIDFromContext(ctx context.Context) string {
 	if v := ctx.Value(ctxTraceID); v != nil {
 		if s, ok := v.(string); ok {
@@ -51,6 +55,7 @@ func TraceIDFromContext(ctx context.Context) string {
 	return ""
 }
 
+// SpanIDFromContext extracts the span ID from context or OpenTelemetry span.
 func SpanIDFromContext(ctx context.Context) string {
 	if v := ctx.Value(ctxSpanID); v != nil {
 		if s, ok := v.(string); ok {
@@ -65,7 +70,7 @@ func SpanIDFromContext(ctx context.Context) string {
 	return ""
 }
 
-// Context-aware logging
+// InfoCtx logs an info message with trace and span IDs from context.
 func InfoCtx(ctx context.Context, msg string, attrs ...any) {
 	msg = fmt.Sprintf(msg, attrs...)
 	logger.Info(msg,
@@ -74,7 +79,7 @@ func InfoCtx(ctx context.Context, msg string, attrs ...any) {
 	)
 }
 
-// Context-aware logging
+// WarnCtx logs a warning message with trace and span IDs from context.
 func WarnCtx(ctx context.Context, msg string, attrs ...any) {
 	msg = fmt.Sprintf(msg, attrs...)
 	logger.Warn(msg,
@@ -83,6 +88,7 @@ func WarnCtx(ctx context.Context, msg string, attrs ...any) {
 	)
 }
 
+// ErrorCtx logs an error message with trace and span IDs from context.
 func ErrorCtx(ctx context.Context, msg string, attrs ...any) {
 	msg = fmt.Sprintf(msg, attrs...)
 	logger.Error(msg,
@@ -91,15 +97,17 @@ func ErrorCtx(ctx context.Context, msg string, attrs ...any) {
 	)
 }
 
-// 原本的 logger 方法保留
+// Info logs an info message (without context).
 func Info(msg string, attrs ...any) {
 	logger.Info(fmt.Sprintf(msg, attrs...))
 }
 
+// Error logs an error message (without context).
 func Error(msg string, attrs ...any) {
 	logger.Error(fmt.Sprintf(msg, attrs...))
 }
 
+// Fatal logs an error message and exits the process.
 func Fatal(msg string, attrs ...any) {
 	logger.Error(fmt.Sprintf(msg, attrs...))
 	os.Exit(1)
