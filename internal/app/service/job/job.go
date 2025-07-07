@@ -42,7 +42,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 	jobName, err := jobMsg.CheckJobName()
 	if err != nil {
 		logger.ErrorCtx(logCtx, "job name invalid: %s", err.Error())
-		sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+		sendCallback(jobMsg, k8s.StatusException, map[string]any{
 			"error": callback.ErrorDetail{
 				ErrorCode: callback.ERROR_CODE_JOB_NAME_INVALID,
 				Message:   err.Error(),
@@ -54,7 +54,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 	if record.Status == StatusJobInit {
 		if jobMsg.JobExists(jobName) {
 			logger.ErrorCtx(logCtx, "job already exists")
-			sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+			sendCallback(jobMsg, k8s.StatusException, map[string]any{
 				"error": &callback.ErrorDetail{
 					ErrorCode: callback.ERROR_CODE_JOB_EXIST_WITH_NEW_MESSAGE,
 					Message:   fmt.Sprintf("job %s already exists in namespace %s", jobName, jobMsg.Job.Namespace),
@@ -66,7 +66,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 		err := jobMsg.ApplyJob(jobName)
 		if err != nil {
 			logger.ErrorCtx(logCtx, "client apply job error")
-			sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+			sendCallback(jobMsg, k8s.StatusException, map[string]any{
 				"error": &callback.ErrorDetail{
 					ErrorCode: callback.ERROR_CODE_JOB_CREATE_FAILED,
 					Message:   err.Error(),
@@ -76,7 +76,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 		}
 
 		job, _ := jobMsg.GetJob(jobName)
-		sendCallback(jobMsg, k8s.StatusJobCreated, map[string]interface{}{
+		sendCallback(jobMsg, k8s.StatusJobCreated, map[string]any{
 			"jobId":   job.GetObjectMeta().GetUID(),
 			"jobName": job.GetObjectMeta().GetName(),
 		}, logCtx)
@@ -101,7 +101,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 			}
 
 			logger.ErrorCtx(logCtx, "watch pod running error: %s", err.Error())
-			sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+			sendCallback(jobMsg, k8s.StatusException, map[string]any{
 				"error": &callback.ErrorDetail{
 					ErrorCode: errorCode,
 					Message:   err.Error(),
@@ -110,7 +110,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 			return
 		}
 
-		sendCallback(jobMsg, k8s.StatusPodRunning, map[string]interface{}{
+		sendCallback(jobMsg, k8s.StatusPodRunning, map[string]any{
 			"podId":   pod.GetObjectMeta().GetUID(),
 			"podName": pod.GetObjectMeta().GetName(),
 		}, logCtx)
@@ -129,7 +129,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 		logger.InfoCtx(logCtx, "watching job completion")
 		err := jobMsg.WatchJobCompletion(logCtx, jobName)
 		if !errors.Is(err, k8s.ErrJobFailed) {
-			sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+			sendCallback(jobMsg, k8s.StatusException, map[string]any{
 				"error": &callback.ErrorDetail{
 					ErrorCode: callback.ERROR_CODE_JOB_WATCH_FAILED,
 					Message:   err.Error(),
@@ -151,7 +151,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 		jobStatus, duration, err := jobMsg.GetJobDetail(jobName)
 		if err != nil {
 			logger.ErrorCtx(logCtx, "get job detail, error: %s", err.Error())
-			sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+			sendCallback(jobMsg, k8s.StatusException, map[string]any{
 				"error": &callback.ErrorDetail{
 					ErrorCode: callback.ERROR_CODE_JOB_GET_DETAIL_FAILED,
 					Message:   err.Error(),
@@ -164,7 +164,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 			jobFailureDetail, err := jobMsg.GetJobFailureDetail(jobName)
 			if err != nil {
 				logger.ErrorCtx(logCtx, "get job failure detail error: %s", err.Error())
-				sendCallback(jobMsg, k8s.StatusException, map[string]interface{}{
+				sendCallback(jobMsg, k8s.StatusException, map[string]any{
 					"error": &callback.ErrorDetail{
 						ErrorCode: callback.ERROR_CODE_JOB_GET_DETAIL_FAILED,
 						Message:   err.Error(),
@@ -175,7 +175,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 
 			jobFailureString, _ := json.Marshal(jobFailureDetail)
 			logger.WarnCtx(logCtx, "job failed, issue detail: %s", string(jobFailureString))
-			sendCallback(jobMsg, jobStatus, map[string]interface{}{
+			sendCallback(jobMsg, jobStatus, map[string]any{
 				"error": &callback.ErrorDetail{
 					ErrorCode: callback.ERROR_CODE_JOB_RUN_FAILED,
 					Message:   string(jobFailureString),
@@ -184,13 +184,13 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 		}
 
 		logger.InfoCtx(logCtx, "getting job detail, status: %d, duration: %d", jobStatus, duration.Seconds())
-		sendCallback(jobMsg, jobStatus, map[string]interface{}{
+		sendCallback(jobMsg, jobStatus, map[string]any{
 			"duration": duration.Seconds(),
 		}, logCtx)
 	}
 }
 
-func sendCallback(jobMsg k8s.JobMessage, status int, detail map[string]interface{}, logCtx context.Context) {
+func sendCallback(jobMsg k8s.JobMessage, status int, detail map[string]any, logCtx context.Context) {
 	if jobMsg.Webhook == nil {
 		return
 	}
