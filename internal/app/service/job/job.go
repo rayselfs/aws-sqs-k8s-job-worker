@@ -48,6 +48,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 				Message:   err.Error(),
 			},
 		}, logCtx)
+		return
 	}
 
 	// apply job, status 0
