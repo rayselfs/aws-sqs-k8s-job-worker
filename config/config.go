@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 )
@@ -24,12 +25,29 @@ func Setup() error {
 		return errors.New("QUEUE_WORKER_POOL_SIZE must be between 1 and 10")
 	}
 
+	Env.QueueRedisWaitTimeoutDuration = time.Duration(Env.QueueRedisWaitTimeout) * time.Second
+	Env.QueueAwsSqsWaitTimeDuration = time.Duration(Env.QueueAwsSqsWaitTimeSeconds+10) * time.Second
+	Env.CallbackBaseDelayDuration = time.Duration(Env.CallbackBaseDelay) * time.Second
+	Env.CallbackMaxDelayDuration = time.Duration(Env.CallbackMaxDelay) * time.Second
+	Env.CallbackTotalTimeoutDuration = time.Duration(Env.CallbackTotalTimeout) * time.Second
+	Env.PodStartTimeoutDuration = time.Duration(Env.PodStartTimeout) * time.Second
+	Env.KubernetesClientDuration = time.Duration(Env.KubernetesClientTimeout) * time.Second
+
 	return nil
 }
 
 var Env EnvVariable
 
 type EnvVariable struct {
+	// transformed time.Duration fields
+	CallbackBaseDelayDuration     time.Duration `env:"-"`
+	CallbackMaxDelayDuration      time.Duration `env:"-"`
+	CallbackTotalTimeoutDuration  time.Duration `env:"-"`
+	QueueRedisWaitTimeoutDuration time.Duration `env:"-"`
+	QueueAwsSqsWaitTimeDuration   time.Duration `env:"-"`
+	PodStartTimeoutDuration       time.Duration `env:"-"`
+	KubernetesClientDuration      time.Duration `env:"-"`
+
 	LeaderElectionLockName string `env:"LEADER_ELECTION_LOCK_NAME" envDefault:"aws-sqs-job-worker-lock"`
 	PodName                string `env:"POD_NAME,required"`
 	PodNamespace           string `env:"POD_NAMESPACE,required"`
@@ -49,9 +67,10 @@ type EnvVariable struct {
 	QueueRedisDB               int    `env:"REDIS_QUEUE_DB" envDefault:"0"`
 	QueueRedisWaitTimeout      int    `env:"REDIS_QUEUE_WAIT_TIMEOUT" envDefault:"5"`
 
-	CallbackMaxRetries   int `env:"CALLBACK_MAX_RETRIES" envDefault:"10"`
-	CallbackBaseDelay    int `env:"CALLBACK_BASE_DELAY" envDefault:"1"`     // seconds
-	CallbackMaxDelay     int `env:"CALLBACK_MAX_DELAY" envDefault:"30"`     // seconds
-	CallbackTotalTimeout int `env:"CALLBACK_TOTAL_TIMEOUT" envDefault:"60"` // seconds
-	PodStartTimeout      int `env:"POD_START_TIMEOUT" envDefault:"600"`     // 單位: 秒，預設 10 分鐘
+	KubernetesClientTimeout int `env:"KUBERNETES_CLIENT_TIMEOUT" envDefault:"30"` // Kubernetes client timeout in seconds
+	CallbackMaxRetries      int `env:"CALLBACK_MAX_RETRIES" envDefault:"10"`
+	CallbackBaseDelay       int `env:"CALLBACK_BASE_DELAY" envDefault:"1"`     // seconds
+	CallbackMaxDelay        int `env:"CALLBACK_MAX_DELAY" envDefault:"30"`     // seconds
+	CallbackTotalTimeout    int `env:"CALLBACK_TOTAL_TIMEOUT" envDefault:"60"` // seconds
+	PodStartTimeout         int `env:"POD_START_TIMEOUT" envDefault:"600"`     // 單位: 秒，預設 10 分鐘
 }

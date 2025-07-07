@@ -2,7 +2,6 @@ package sqs
 
 import (
 	"context"
-	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -30,7 +29,7 @@ func New(region string, queueUrl string) (*SqsActions, error) {
 }
 
 func (a *SqsActions) GetMessages() ([]types.Message, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), config.Env.QueueAwsSqsWaitTimeDuration)
 	defer cancel()
 	var messages []types.Message
 
