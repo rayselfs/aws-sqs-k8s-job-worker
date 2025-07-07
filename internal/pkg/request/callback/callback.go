@@ -12,12 +12,14 @@ import (
 	"aws-sqs-k8s-job-worker/config"
 )
 
+// RequestBody represents the body of a callback request.
 type RequestBody struct {
 	ID     string         `json:"id"`
 	Status int            `json:"status"`
 	Detail map[string]any `json:"detail"`
 }
 
+// ErrorDetail provides error code and message for callback responses.
 type ErrorDetail struct {
 	ErrorCode string `json:"errorCode"`
 	Message   string `json:"message"`
@@ -34,6 +36,7 @@ var (
 	ERROR_CODE_JOB_RUN_FAILED             = "A108"
 )
 
+// Post sends the callback request to the specified URL with retry and timeout logic.
 func (body RequestBody) Post(url string) (*http.Response, error) {
 	jsonData, err := json.Marshal(body)
 	if err != nil {
