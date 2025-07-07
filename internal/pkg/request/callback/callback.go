@@ -70,7 +70,10 @@ func (body RequestBody) Post(url string) (*http.Response, error) {
 			break
 		}
 
-		delay := min(baseDelay<<(attempt-1), maxDelay)
+		delay := baseDelay << (attempt - 1)
+		if delay > maxDelay {
+			delay = maxDelay
+		}
 		time.Sleep(delay)
 	}
 
