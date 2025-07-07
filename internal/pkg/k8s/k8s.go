@@ -291,7 +291,9 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 
 // ApplyJob creates a Kubernetes Job in the specified namespace.
 func (jobMsg JobMessage) ApplyJob(jobName string) error {
-	_, err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Create(context.TODO(), jobMsg.getJobSpec(jobName), metaV1.CreateOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
+	defer cancel()
+	_, err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Create(ctx, jobMsg.getJobSpec(jobName), metaV1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -301,7 +303,9 @@ func (jobMsg JobMessage) ApplyJob(jobName string) error {
 
 // GetJob get Job
 func (jobMsg JobMessage) GetJob(jobName string) (*batchV1.Job, error) {
-	return Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Get(context.TODO(), jobName, metaV1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
+	defer cancel()
+	return Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Get(ctx, jobName, metaV1.GetOptions{})
 }
 
 // JobExists checks if a job with the given name already exists in the specified namespace.
@@ -332,8 +336,7 @@ func (jobMsg JobMessage) WatchPodRunning(logCtx context.Context, jobName string)
 		fields.OneTermEqualSelector("metadata.name", pod.Name),
 	)
 
-	timeout := time.Duration(config.Env.PodStartTimeout)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), config.Env.PodStartTimeoutDuration)
 	defer cancel()
 	stopCh := make(chan struct{})
 
@@ -370,8 +373,7 @@ func (jobMsg JobMessage) WatchPodRunning(logCtx context.Context, jobName string)
 
 // getJobPods waits for the first pod belonging to a Job, with timeout.
 func (jobMsg JobMessage) getJobPods(logCtx context.Context, jobName string) (*coreV1.Pod, error) {
-	timeout := time.Duration(60) * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
 	defer cancel()
 
 	ticker := time.NewTicker(1 * time.Second)
@@ -383,7 +385,9 @@ func (jobMsg JobMessage) getJobPods(logCtx context.Context, jobName string) (*co
 			return nil, fmt.Errorf("timeout waiting for pod of job %s in namespace %s", jobName, jobMsg.Job.Namespace)
 
 		case <-ticker.C:
-			pods, err := Clientset.CoreV1().Pods(jobMsg.Job.Namespace).List(context.TODO(), metaV1.ListOptions{
+			ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
+			defer cancel()
+			pods, err := Clientset.CoreV1().Pods(jobMsg.Job.Namespace).List(ctx, metaV1.ListOptions{
 				LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 			})
 			if err != nil {
@@ -432,7 +436,10 @@ func (jobMsg JobMessage) WatchJobCompletion(logCtx context.Context, jobName stri
 						err = ErrJobFailed
 
 						deletePolicy := metaV1.DeletePropagationForeground
-						err = Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Delete(context.TODO(), jobName, metaV1.DeleteOptions{
+
+						ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
+						defer cancel()
+						err = Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Delete(ctx, jobName, metaV1.DeleteOptions{
 							PropagationPolicy: &deletePolicy,
 						})
 						once.Do(func() { close(stopCh) })
@@ -493,7 +500,9 @@ func (jobMsg JobMessage) GetJobFailureDetail(jobName string) (*JobFailureDetail,
 		}
 	}
 
-	pods, err := Clientset.CoreV1().Pods(jobMsg.Job.Namespace).List(context.TODO(), metaV1.ListOptions{
+	ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
+	defer cancel()
+	pods, err := Clientset.CoreV1().Pods(jobMsg.Job.Namespace).List(ctx, metaV1.ListOptions{
 		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 	})
 	if err != nil {

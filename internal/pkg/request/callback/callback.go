@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -40,9 +41,9 @@ func (body RequestBody) Post(url string) (*http.Response, error) {
 	}
 
 	maxRetries := config.Env.CallbackMaxRetries
-	baseDelay := time.Duration(config.Env.CallbackBaseDelay) * time.Second
-	maxDelay := time.Duration(config.Env.CallbackMaxDelay) * time.Second
-	totalTimeout := time.Duration(config.Env.CallbackTotalTimeout) * time.Second
+	baseDelay := config.Env.CallbackBaseDelayDuration
+	maxDelay := config.Env.CallbackMaxDelayDuration
+	totalTimeout := config.Env.CallbackTotalTimeoutDuration
 
 	ctx, cancel := context.WithTimeout(context.Background(), totalTimeout)
 	defer cancel()
@@ -58,13 +59,21 @@ func (body RequestBody) Post(url string) (*http.Response, error) {
 			break
 		}
 		req.Header.Set("Content-Type", "application/json")
+		// 其他 header 可以再補
 
 		resp, err = client.Do(req)
-		if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return resp, nil
+		if resp != nil {
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return resp, nil
+			}
+			// 關閉 body，避免多次 resp 泄漏
+			resp.Body.Close()
+			lastErr = fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 		}
 
-		lastErr = err
+		if err != nil {
+			lastErr = err
+		}
 
 		if ctx.Err() != nil {
 			break
@@ -74,11 +83,17 @@ func (body RequestBody) Post(url string) (*http.Response, error) {
 		if delay > maxDelay {
 			delay = maxDelay
 		}
-		time.Sleep(delay)
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+			// retry
+		}
 	}
 
 	if lastErr == nil {
 		lastErr = errors.New("request failed after multiple attempts")
 	}
-	return resp, lastErr
+	return nil, lastErr
 }

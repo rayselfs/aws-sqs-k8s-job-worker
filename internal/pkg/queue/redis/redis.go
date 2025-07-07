@@ -3,7 +3,6 @@ package redisQueue
 import (
 	"context"
 	"encoding/json"
-	"time"
 
 	"aws-sqs-k8s-job-worker/config"
 
@@ -28,7 +27,7 @@ func (q *RedisActions) GetMessages() ([]types.Message, error) {
 	var messages []types.Message
 
 	for i := 0; i < int(config.Env.QueueWorkerPoolSize); i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.Env.QueueRedisWaitTimeout)*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), config.Env.QueueRedisWaitTimeoutDuration)
 
 		res, err := q.Client.LPop(ctx, q.Key).Result()
 		cancel()
