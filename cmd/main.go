@@ -185,16 +185,6 @@ func handleRecords() {
 
 // messageProcess process message from SQS
 func messageProcess(message types.Message) {
-	start := time.Now()
-
-	defer func() {
-		duration := time.Since(start).Seconds()
-		prom.MessageProcessingTime.Observe(duration)
-	}()
-
-	logger.Info("message id: %s", *message.MessageId)
-	logger.Info("message body: %s", *message.Body)
-
 	var jobMsg k8s.JobMessage
 	if err := json.Unmarshal([]byte(*message.Body), &jobMsg); err != nil {
 		logger.Error("failed to unmarshal job message, error: %s", err.Error())
@@ -203,41 +193,12 @@ func messageProcess(message types.Message) {
 		return
 	}
 
-	if err := validate.Struct(jobMsg); err != nil {
-		logger.Error("job message validation failed, error: %s", err.Error())
-		prom.MessagesFailed.Inc()
-		Queue.DeleteMessage(message)
-		return
-	}
-
-	ctx := logger.WithTraceID(context.Background(), jobMsg.ID)
-
-	if _, err := CacheClient.Get(config.Env.CacheJobKeyPrefix + jobMsg.ID); err == nil {
-		logger.Error("job has been executed")
-		Queue.DeleteMessage(message)
-		prom.MessagesFailed.Inc()
-		return
-	}
-
 	record := job.Record{
 		SQSMessage: message,
 		JobMessage: jobMsg,
 		Status:     job.StatusJobInit,
 	}
-
-	recordData, _ := json.Marshal(record)
-	CacheClient.Set(config.Env.CacheJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
-
-	Queue.DeleteMessage(message)
-
-	logger.InfoCtx(ctx, "start message process")
-	job.Execution(record, CacheClient, ctx)
-
-	prom.MessagesProcessed.Inc()
-
-	if err := CacheClient.Delete(config.Env.CacheJobKeyPrefix + jobMsg.ID); err != nil {
-		logger.ErrorCtx(ctx, "unable to delete job from redis")
-	}
+	processRecord(record, true)
 }
 
 // recordProcess process message from redis
@@ -247,12 +208,44 @@ func recordProcess(recordData string) {
 		logger.Error("failed to unmarshal record, error: %v", err)
 		return
 	}
+	processRecord(record, false)
+}
 
-	ctx := logger.WithTraceID(context.Background(), record.JobMessage.ID)
+// processRecord 處理共用邏輯
+func processRecord(record job.Record, fromSQS bool) {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start).Seconds()
+		prom.MessageProcessingTime.Observe(duration)
+	}()
 
-	job.Execution(record, CacheClient, ctx)
+	logCtx := logger.WithTraceID(context.Background(), record.JobMessage.ID)
+	jobMsg := record.JobMessage
 
-	if err := CacheClient.Delete(config.Env.CacheJobKeyPrefix + record.JobMessage.ID); err != nil {
-		logger.ErrorCtx(ctx, "unable to delete job from redis")
+	if fromSQS {
+		logger.Info("message id: %s", *record.SQSMessage.MessageId)
+		logger.Info("message body: %s", *record.SQSMessage.Body)
+		if err := validate.Struct(jobMsg); err != nil {
+			logger.Error("job message validation failed, error: %s", err.Error())
+			prom.MessagesFailed.Inc()
+			Queue.DeleteMessage(record.SQSMessage)
+			return
+		}
+		if _, err := CacheClient.Get(config.Env.CacheJobKeyPrefix + jobMsg.ID); err == nil {
+			logger.Error("job has been executed")
+			Queue.DeleteMessage(record.SQSMessage)
+			prom.MessagesFailed.Inc()
+			return
+		}
+		recordData, _ := json.Marshal(record)
+		CacheClient.Set(config.Env.CacheJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
+		Queue.DeleteMessage(record.SQSMessage)
+	}
+
+	logger.InfoCtx(logCtx, "start message process")
+	job.Execution(record, CacheClient, logCtx)
+	prom.MessagesProcessed.Inc()
+	if err := CacheClient.Delete(config.Env.CacheJobKeyPrefix + jobMsg.ID); err != nil {
+		logger.ErrorCtx(logCtx, "unable to delete job from redis")
 	}
 }
