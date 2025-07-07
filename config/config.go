@@ -16,6 +16,10 @@ func Setup() error {
 		return errors.New("PodRunningTimeout must be greater than 0")
 	}
 
+	if Env.QueueType != "redis" && Env.QueueType != "sqs" {
+		return errors.New("QUEUE_TYPE must be 'redis' or 'sqs'")
+	}
+
 	return nil
 }
 

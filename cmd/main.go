@@ -43,28 +43,33 @@ func main() {
 		logger.Fatal("unable to set config: %s", err.Error())
 	}
 
+	// Initialize k8s client
+	if err := k8s.Setup(); err != nil {
+		logger.Fatal("unable to set k8s, error: %s", err.Error())
+	}
+
 	// Initialize queue
 	switch config.Env.QueueType {
 	case "redis":
 		Queue = redisQueue.New(config.Env.QueueRedisEndpoint, config.Env.QueueRedisKeyPrefix, config.Env.QueueRedisDB)
 		logger.Info("Using Redis queue")
 	case "sqs":
-		Queue = sqs.New(config.Env.QueueAwsSqs, config.Env.QueueAwsSqsUrl)
+		if Queue, err = sqs.New(config.Env.QueueAwsSqs, config.Env.QueueAwsSqsUrl); err != nil {
+			logger.Fatal("unable to initialize SQS queue, error: %s", err.Error())
+		}
 		logger.Info("Using AWS SQS queue")
-	default:
-		logger.Fatal("QUEUE_TYPE must be 'redis', 'sqs'")
 	}
 
 	// Initialize cache
 	CacheClient = redisCache.New(config.Env.CacheRedisEndpoint, config.Env.CacheRedisDB)
 
-	// Initialize k8s client
-	if err := k8s.Setup(); err != nil {
-		logger.Fatal("unable to set k8s, error: %s", err.Error())
-	}
-
+	// Initialize Prometheus metrics
 	prom.Setup()
 
+	// Initialize validator
+	validate = validator.New()
+
+	// Start http server
 	http.HandleFunc("/healthz", healthHandler)
 	http.Handle("/metrics", promhttp.Handler())
 	go func() {
@@ -72,9 +77,9 @@ func main() {
 		http.ListenAndServe(":8080", nil)
 	}()
 
+	// Start leader election
 	electorLockIdentity := config.Env.PodName
 	lock := k8s.GetLeaseLock(electorLockIdentity)
-
 	leaderElectorConfig := leaderelection.LeaderElectionConfig{
 		Lock:          lock,
 		LeaseDuration: 15 * time.Second,
@@ -140,7 +145,7 @@ func handleMessages() {
 	for {
 		messages, err := Queue.GetMessages()
 		if err != nil {
-			logger.Fatal("unable to get messages from queue, error: %s", err.Error())
+			logger.Error("unable to get messages from queue, error: %s", err.Error())
 		}
 		if len(messages) > 0 {
 			for _, message := range messages {
@@ -155,7 +160,8 @@ func handleMessages() {
 func handleRecords() {
 	rdbList, err := CacheClient.GetByPrefix(config.Env.CacheJobKeyPrefix)
 	if err != nil {
-		logger.Fatal("unable to get list in redis, error: %s", err.Error())
+		logger.Error("unable to get list in redis, error: %s", err.Error())
+		return
 	}
 
 	logger.Info("start record process")

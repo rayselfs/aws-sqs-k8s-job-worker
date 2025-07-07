@@ -312,7 +312,8 @@ func (jobMsg JobMessage) JobExists(jobName string) bool {
 			return false
 		}
 
-		logger.Fatal("Failed to get job: %s", err.Error())
+		logger.Error("Failed to get job: %s", err.Error())
+		return true // exception case, assume job exists
 	}
 	return true
 }

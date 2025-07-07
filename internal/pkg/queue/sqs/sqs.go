@@ -17,17 +17,16 @@ type SqsActions struct {
 	QueueURL  *string
 }
 
-func New(region string, queueUrl string) *SqsActions {
+func New(region string, queueUrl string) (*SqsActions, error) {
 	// Load the Shared AWS Configuration
 	cfg, err := awsconfig.LoadDefaultConfig(context.TODO(), awsconfig.WithRegion(region))
 	if err != nil {
-		logger.Fatal("unable to load AWS config")
-		return nil
+		return nil, err
 	}
 
 	// Create an SQS service client
 	svc := sqs.NewFromConfig(cfg)
-	return &SqsActions{SqsClient: svc, QueueURL: &queueUrl}
+	return &SqsActions{SqsClient: svc, QueueURL: &queueUrl}, nil
 }
 
 func (a *SqsActions) GetMessages() ([]types.Message, error) {
