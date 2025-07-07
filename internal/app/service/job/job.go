@@ -83,7 +83,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 
 		record.Status = StatusJobCreated
 		recordData := marshalRecord(record)
-		err = cacheClient.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
+		err = cacheClient.Set(config.Env.CacheJobKeyPrefix+jobMsg.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
 		if err != nil {
 			logger.ErrorCtx(logCtx, "cache set error")
 			return
@@ -117,7 +117,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 
 		record.Status = StatusPodRunning
 		recordData := marshalRecord(record)
-		err = cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
+		err = cacheClient.Set(config.Env.CacheJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
 		if err != nil {
 			logger.ErrorCtx(logCtx, "cache set error")
 			return
@@ -140,7 +140,7 @@ func Execution(record Record, cacheClient cache.Client, logCtx context.Context) 
 
 		record.Status = StatusJobDone
 		recordData := marshalRecord(record)
-		err = cacheClient.Set(config.Env.RedisJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
+		err = cacheClient.Set(config.Env.CacheJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
 		if err != nil {
 			logger.ErrorCtx(logCtx, "cache set error")
 			return
