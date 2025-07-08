@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"aws-sqs-k8s-job-worker/internal/pkg/cache"
+	"aws-sqs-k8s-job-worker/internal/cache"
 
 	"github.com/redis/go-redis/v9"
 )

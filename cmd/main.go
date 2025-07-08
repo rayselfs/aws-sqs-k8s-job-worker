@@ -6,14 +6,14 @@ package main
 
 import (
 	"aws-sqs-k8s-job-worker/config"
-	"aws-sqs-k8s-job-worker/internal/app/service/job"
-	"aws-sqs-k8s-job-worker/internal/pkg/cache"
-	redisCache "aws-sqs-k8s-job-worker/internal/pkg/cache/redis"
-	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
-	"aws-sqs-k8s-job-worker/internal/pkg/logger"
-	"aws-sqs-k8s-job-worker/internal/pkg/queue"
-	redisQueue "aws-sqs-k8s-job-worker/internal/pkg/queue/redis"
-	"aws-sqs-k8s-job-worker/internal/pkg/queue/sqs"
+	"aws-sqs-k8s-job-worker/internal/cache"
+	redisCache "aws-sqs-k8s-job-worker/internal/cache/redis"
+	"aws-sqs-k8s-job-worker/internal/job"
+	"aws-sqs-k8s-job-worker/internal/k8s"
+	"aws-sqs-k8s-job-worker/internal/logger"
+	"aws-sqs-k8s-job-worker/internal/queue"
+	redisQueue "aws-sqs-k8s-job-worker/internal/queue/redis"
+	"aws-sqs-k8s-job-worker/internal/queue/sqs"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -21,7 +21,7 @@ import (
 	"os"
 	"time"
 
-	prom "aws-sqs-k8s-job-worker/internal/pkg/prometheus"
+	prom "aws-sqs-k8s-job-worker/internal/metrics"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/go-playground/validator/v10"
