@@ -10,10 +10,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	"aws-sqs-k8s-job-worker/config"
-	"aws-sqs-k8s-job-worker/internal/pkg/cache"
-	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
-	"aws-sqs-k8s-job-worker/internal/pkg/logger"
-	"aws-sqs-k8s-job-worker/internal/pkg/request/callback"
+	"aws-sqs-k8s-job-worker/internal/cache"
+	"aws-sqs-k8s-job-worker/internal/callback"
+	"aws-sqs-k8s-job-worker/internal/k8s"
+	"aws-sqs-k8s-job-worker/internal/logger"
 )
 
 // Record holds a job record including SQS message, job message, and status.

@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	"aws-sqs-k8s-job-worker/config"
-	"aws-sqs-k8s-job-worker/internal/pkg/logger"
+	"aws-sqs-k8s-job-worker/internal/logger"
 )
 
 // SqsActions provides methods to interact with AWS SQS.
