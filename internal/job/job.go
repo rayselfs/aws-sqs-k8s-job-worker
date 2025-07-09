@@ -1,3 +1,4 @@
+// Extracted from your original Execution function with improvements
 package job
 
 import (
@@ -14,210 +15,192 @@ import (
 	"aws-sqs-k8s-job-worker/internal/callback"
 	"aws-sqs-k8s-job-worker/internal/k8s"
 	"aws-sqs-k8s-job-worker/internal/logger"
+	prom "aws-sqs-k8s-job-worker/internal/metrics"
+	"aws-sqs-k8s-job-worker/internal/utils"
+
+	batchV1 "k8s.io/api/batch/v1"
+	coreV1 "k8s.io/api/core/v1"
 )
 
-// Record holds a job record including SQS message, job message, and status.
 type Record struct {
-	SQSMessage types.Message  `json:"sqsMessage"`
-	JobMessage k8s.JobMessage `json:"jobMessage"`
-	Status     int            `json:"status"`
+	SQSMessage types.Message   `json:"sqsMessage"`
+	JobMessage k8s.JobMessage  `json:"jobMessage"`
+	JobName    string          `json:"jobName"`
+	Status     utils.JobStatus `json:"status"`
 }
 
-const (
-	StatusJobInit    = 0 // Initial state
-	StatusJobCreated = 1 // Job created
-	StatusPodRunning = 2 // Pod running
-	StatusJobDone    = 3 // Job completed
-)
-
-// marshalRecord marshals a Record to a JSON string.
-func marshalRecord(record Record) string {
-	data, _ := json.Marshal(record)
-	return string(data)
-}
-
-// Execution is the main workflow for job execution, including validation, creation, monitoring, and callback.
-// record: job execution record
-// cacheClient: cache client
-// logCtx: context for logging
-func Execution(record Record, cacheClient cache.Client, logCtx context.Context) {
-	jobMsg := record.JobMessage
-
-	// check job name
-	jobName, err := jobMsg.CheckJobName()
-	if err != nil {
-		logger.ErrorCtx(logCtx, "job name invalid: %s", err.Error())
-		sendCallback(jobMsg, k8s.StatusException, map[string]any{
-			"error": callback.ErrorDetail{
-				ErrorCode: callback.ERROR_CODE_JOB_NAME_INVALID,
-				Message:   err.Error(),
-			},
-		}, logCtx)
-		return
-	}
-
-	// apply job, status 0
-	if record.Status == StatusJobInit {
-		if jobMsg.JobExists(jobName) {
-			logger.ErrorCtx(logCtx, "job already exists")
-			sendCallback(jobMsg, k8s.StatusException, map[string]any{
-				"error": &callback.ErrorDetail{
-					ErrorCode: callback.ERROR_CODE_JOB_EXIST_WITH_NEW_MESSAGE,
-					Message:   fmt.Sprintf("job %s already exists in namespace %s", jobName, jobMsg.Job.Namespace),
-				},
-			}, logCtx)
-			return
-		}
-
-		err := jobMsg.ApplyJob(jobName)
-		if err != nil {
-			logger.ErrorCtx(logCtx, "client apply job error")
-			sendCallback(jobMsg, k8s.StatusException, map[string]any{
-				"error": &callback.ErrorDetail{
-					ErrorCode: callback.ERROR_CODE_JOB_CREATE_FAILED,
-					Message:   err.Error(),
-				},
-			}, logCtx)
-			return
-		}
-
-		job, _ := jobMsg.GetJob(jobName)
-		sendCallback(jobMsg, k8s.StatusJobCreated, map[string]any{
-			"jobId":   job.GetObjectMeta().GetUID(),
-			"jobName": job.GetObjectMeta().GetName(),
-		}, logCtx)
-
-		record.Status = StatusJobCreated
-		recordData := marshalRecord(record)
-		err = cacheClient.Set(config.Env.CacheJobKeyPrefix+jobMsg.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
-		if err != nil {
-			logger.ErrorCtx(logCtx, "cache set error")
-			return
-		}
-	}
-
-	// get job pod, status 1
-	if record.Status == StatusJobCreated {
-		logger.InfoCtx(logCtx, "watching pod running")
-		pod, err := jobMsg.WatchPodRunning(logCtx, jobName)
-		if err != nil {
-			errorCode := callback.ERROR_CODE_JOB_POD_START_FAILED
-			if errors.Is(err, k8s.ErrPodStartTimeout) {
-				errorCode = callback.ERROR_CODE_JOB_POD_START_TIMEOUT
-			}
-
-			logger.ErrorCtx(logCtx, "watch pod running error: %s", err.Error())
-			sendCallback(jobMsg, k8s.StatusException, map[string]any{
-				"error": &callback.ErrorDetail{
-					ErrorCode: errorCode,
-					Message:   err.Error(),
-				},
-			}, logCtx)
-			return
-		}
-
-		sendCallback(jobMsg, k8s.StatusPodRunning, map[string]any{
-			"podId":   pod.GetObjectMeta().GetUID(),
-			"podName": pod.GetObjectMeta().GetName(),
-		}, logCtx)
-
-		record.Status = StatusPodRunning
-		recordData := marshalRecord(record)
-		err = cacheClient.Set(config.Env.CacheJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
-		if err != nil {
-			logger.ErrorCtx(logCtx, "cache set error")
-			return
-		}
-	}
-
-	// wait job completed, status 2
-	if record.Status == StatusPodRunning {
-		logger.InfoCtx(logCtx, "watching job completion")
-		err := jobMsg.WatchJobCompletion(logCtx, jobName)
-		if !errors.Is(err, k8s.ErrJobFailed) {
-			sendCallback(jobMsg, k8s.StatusException, map[string]any{
-				"error": &callback.ErrorDetail{
-					ErrorCode: callback.ERROR_CODE_JOB_WATCH_FAILED,
-					Message:   err.Error(),
-				},
-			}, logCtx)
-			return
-		}
-
-		record.Status = StatusJobDone
-		recordData := marshalRecord(record)
-		err = cacheClient.Set(config.Env.CacheJobKeyPrefix+record.JobMessage.ID, recordData, time.Second*time.Duration(jobMsg.Job.ActiveDeadlineSeconds))
-		if err != nil {
-			logger.ErrorCtx(logCtx, "cache set error")
-			return
-		}
-	}
-
-	if record.Status == StatusJobDone {
-		jobStatus, duration, err := jobMsg.GetJobDetail(jobName)
-		if err != nil {
-			logger.ErrorCtx(logCtx, "get job detail, error: %s", err.Error())
-			sendCallback(jobMsg, k8s.StatusException, map[string]any{
-				"error": &callback.ErrorDetail{
-					ErrorCode: callback.ERROR_CODE_JOB_GET_DETAIL_FAILED,
-					Message:   err.Error(),
-				},
-			}, logCtx)
-			return
-		}
-
-		if jobStatus == k8s.StatusJobFailed {
-			jobFailureDetail, err := jobMsg.GetJobFailureDetail(jobName)
+func (record *Record) Execution(ctx context.Context, cacheClient cache.Client) {
+	// maxStep is greater than number of states (currently 4), to allow one retry
+	maxStep := 5
+	for step := 0; step < maxStep; step++ {
+		switch record.Status {
+		case utils.StatusJobInit:
+			err, errorCode := record.handleJobInit(ctx)
 			if err != nil {
-				logger.ErrorCtx(logCtx, "get job failure detail error: %s", err.Error())
-				sendCallback(jobMsg, k8s.StatusException, map[string]any{
-					"error": &callback.ErrorDetail{
-						ErrorCode: callback.ERROR_CODE_JOB_GET_DETAIL_FAILED,
-						Message:   err.Error(),
-					},
-				}, logCtx)
+				record.sendCallbackErr(ctx, errorCode, err)
 				return
 			}
+			record.Status = utils.StatusJobCreated
+			cacheStore(ctx, cacheClient, record)
+			logger.InfoCtx(ctx, "status transitioned to %s", record.Status.String())
 
-			jobFailureString, _ := json.Marshal(jobFailureDetail)
-			logger.WarnCtx(logCtx, "job failed, issue detail: %s", string(jobFailureString))
-			sendCallback(jobMsg, jobStatus, map[string]any{
-				"error": &callback.ErrorDetail{
-					ErrorCode: callback.ERROR_CODE_JOB_RUN_FAILED,
-					Message:   string(jobFailureString),
-				},
-			}, logCtx)
+		case utils.StatusJobCreated:
+			err, errorCode := record.handleJobCreated(ctx)
+			if err != nil {
+				record.sendCallbackErr(ctx, errorCode, err)
+			}
+
+			record.Status = utils.StatusJobRunning
+			cacheStore(ctx, cacheClient, record)
+			logger.InfoCtx(ctx, "status transitioned to %s", record.Status.String())
+
+		case utils.StatusJobRunning:
+			err, errorCode := record.handleJobRunning(ctx)
+			if err != nil {
+				record.sendCallbackErr(ctx, errorCode, err)
+			}
+
+			record.Status = utils.StatusJobDone
+			cacheStore(ctx, cacheClient, record)
+			logger.InfoCtx(ctx, "status transitioned to %s", record.Status.String())
+
+		case utils.StatusJobDone:
+			record.handleJobDone(ctx)
+			return
+		default:
+			logger.WarnCtx(ctx, "unexpected job status %d", record.Status.String())
+			return
 		}
-
-		logger.InfoCtx(logCtx, "getting job detail, status: %d, duration: %d", jobStatus, duration.Seconds())
-		sendCallback(jobMsg, jobStatus, map[string]any{
-			"duration": duration.Seconds(),
-		}, logCtx)
 	}
+
+	// optional fallback
+	logger.WarnCtx(ctx, "job state loop exceeded maxStep (%d)", maxStep)
 }
 
-// sendCallback sends a callback to the specified webhook.
-// jobMsg: job message
-// status: status code
-// detail: callback details
-// logCtx: context for logging
-func sendCallback(jobMsg k8s.JobMessage, status int, detail map[string]any, logCtx context.Context) {
-	if jobMsg.Webhook == nil {
-		return
-	}
-
-	requestBody := callback.RequestBody{
-		ID:     jobMsg.ID,
-		Status: status,
-		Detail: detail,
-	}
-
-	resp, err := requestBody.Post(jobMsg.Webhook.URL)
+func (record *Record) handleJobInit(ctx context.Context) (err error, errorCode string) {
+	exist, err := utils.Retry(ctx, 2, 3*time.Second, func() (bool, error) {
+		return record.JobMessage.JobExists(ctx, record.JobName)
+	})
 	if err != nil {
-		logger.ErrorCtx(logCtx, "start job callback error")
+		err = fmt.Errorf("failed to check job existence: %w", err)
+		errorCode = callback.ERROR_CODE_JOB_GET
 		return
 	}
-	// Print the response status.
-	logger.InfoCtx(logCtx, "callback response")
-	resp.Body.Close()
+	if exist {
+		err = fmt.Errorf("job %s already exists", record.JobName)
+		errorCode = callback.ERROR_CODE_JOB_EXIST_WITH_NEW_MESSAGE
+		return
+	}
+
+	if err = record.JobMessage.ApplyJob(ctx, record.JobName); err != nil {
+		errorCode = callback.ERROR_CODE_JOB_CREATE_FAILED
+		return
+	}
+
+	job, err := utils.Retry(ctx, 2, 2*time.Second, func() (*batchV1.Job, error) {
+		return record.JobMessage.GetJob(ctx, record.JobName)
+	})
+	if err != nil {
+		errorCode = callback.ERROR_CODE_JOB_GET
+		return
+	}
+
+	callback.Send(ctx, record.JobMessage, k8s.StatusJobCreated, map[string]any{
+		"jobId":   job.GetObjectMeta().GetUID(),
+		"jobName": job.GetObjectMeta().GetName(),
+	})
+	return
+}
+
+func (record *Record) handleJobCreated(ctx context.Context) (err error, errorCode string) {
+	logger.InfoCtx(ctx, "watching pod running")
+	pod, err := utils.Retry(ctx, 2, 3*time.Second, func() (*coreV1.Pod, error) {
+		return record.JobMessage.WatchPodRunning(ctx, record.JobName)
+	})
+	if err != nil {
+		errorCode = callback.ERROR_CODE_JOB_POD_START_FAILED
+		if errors.Is(err, k8s.ErrPodStartTimeout) {
+			errorCode = callback.ERROR_CODE_JOB_POD_START_TIMEOUT
+		}
+		return
+	}
+	callback.Send(ctx, record.JobMessage, k8s.StatusPodRunning, map[string]any{
+		"podId":   pod.GetObjectMeta().GetUID(),
+		"podName": pod.GetObjectMeta().GetName(),
+	})
+	return
+}
+
+func (record *Record) handleJobRunning(ctx context.Context) (err error, errorCode string) {
+	logger.InfoCtx(ctx, "watching job completion")
+	err = record.JobMessage.WatchJobCompletion(ctx, record.JobName)
+	if err != nil && !errors.Is(err, k8s.ErrJobFailed) {
+		errorCode = callback.ERROR_CODE_JOB_WATCH_FAILED
+		return
+	}
+	return
+}
+
+func (record *Record) handleJobDone(ctx context.Context) {
+	detail, err := utils.Retry(ctx, 2, 2*time.Second, func() (utils.JobDetail, error) {
+		status, duration, err := record.JobMessage.GetJobDetail(ctx, record.JobName)
+		return utils.JobDetail{Status: status, Duration: duration}, err
+	})
+	if err != nil {
+		record.sendCallbackErr(ctx, callback.ERROR_CODE_JOB_GET_DETAIL_FAILED, err)
+		return
+	}
+	if detail.Status == k8s.StatusJobFailed {
+		failureDetail, err := utils.Retry(ctx, 2, 1*time.Second, func() (*k8s.JobFailureDetail, error) {
+			return record.JobMessage.GetJobFailureDetail(ctx, record.JobName)
+		})
+		if err != nil {
+			record.sendCallbackErr(ctx, callback.ERROR_CODE_JOB_GET_DETAIL_FAILED, err)
+			return
+		}
+		jobFailureString, err := json.Marshal(failureDetail)
+		if err != nil {
+			logger.WarnCtx(ctx, "failed to marshal job failure detail: %v", err)
+			jobFailureString = []byte(`{"marshal":"failed"}`)
+		}
+		logger.WarnCtx(ctx, "job failed, issue detail: %s", string(jobFailureString))
+		callback.Send(ctx, record.JobMessage, detail.Status, map[string]any{
+			"error": &callback.ErrorDetail{
+				ErrorCode: callback.ERROR_CODE_JOB_RUN_FAILED,
+				Message:   string(jobFailureString),
+			},
+		})
+		prom.JobFailure.Inc()
+		return
+	}
+	logger.InfoCtx(ctx, "job succeeded, duration: %.2fs", detail.Duration.Seconds())
+	callback.Send(ctx, record.JobMessage, detail.Status, map[string]any{
+		"duration": detail.Duration.Seconds(),
+	})
+	prom.JobSuccess.Inc()
+}
+
+func (record *Record) sendCallbackErr(ctx context.Context, errorCode string, err error) {
+	logger.ErrorCtx(ctx, "error: %s", err.Error())
+	callback.Send(ctx, record.JobMessage, k8s.StatusException, map[string]any{
+		"error": &callback.ErrorDetail{
+			ErrorCode: errorCode,
+			Message:   err.Error(),
+		},
+	})
+}
+
+func (record *Record) TTL() time.Duration {
+	return time.Second * time.Duration(record.JobMessage.Job.ActiveDeadlineSeconds)
+}
+
+func cacheStore(ctx context.Context, client cache.Client, record *Record) {
+	data, err := json.Marshal(record)
+	if err != nil {
+		logger.WarnCtx(ctx, "marshal error, skip caching job %s, status: %d: %v", record.JobMessage.ID, record.Status.String(), err)
+		return
+	}
+	if err := client.Set(ctx, config.Env.CacheJobKeyPrefix+record.JobMessage.ID, data, record.TTL()); err != nil {
+		logger.WarnCtx(ctx, "cache set error for job %s, status: %d: %v", record.JobMessage.ID, record.Status.String(), err)
+	}
 }

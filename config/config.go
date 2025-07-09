@@ -27,8 +27,6 @@ func Setup() error {
 		return errors.New("QUEUE_WORKER_POOL_SIZE must be between 1 and 10")
 	}
 
-	Env.QueueRedisWaitTimeoutDuration = time.Duration(Env.QueueRedisWaitTimeout) * time.Second
-	Env.QueueAwsSqsWaitTimeDuration = time.Duration(Env.QueueAwsSqsWaitTimeSeconds+10) * time.Second
 	Env.CallbackBaseDelayDuration = time.Duration(Env.CallbackBaseDelay) * time.Second
 	Env.CallbackMaxDelayDuration = time.Duration(Env.CallbackMaxDelay) * time.Second
 	Env.CallbackTotalTimeoutDuration = time.Duration(Env.CallbackTotalTimeout) * time.Second
@@ -69,7 +67,6 @@ type EnvVariable struct {
 	QueueRedisEndpoint         string `env:"REDIS_QUEUE_ENDPOINT"`                            // Redis endpoint for queue
 	QueueRedisKeyPrefix        string `env:"REDIS_QUEUE_KEY_PREFIX" envDefault:"queue-"`      // Prefix for queue keys in Redis
 	QueueRedisDB               int    `env:"REDIS_QUEUE_DB" envDefault:"0"`                   // Redis DB index for queue
-	QueueRedisWaitTimeout      int    `env:"REDIS_QUEUE_WAIT_TIMEOUT" envDefault:"5"`         // Redis queue wait timeout (seconds)
 
 	KubernetesClientTimeout int `env:"KUBERNETES_CLIENT_TIMEOUT" envDefault:"30"` // Kubernetes client timeout (seconds)
 	CallbackMaxRetries      int `env:"CALLBACK_MAX_RETRIES" envDefault:"10"`      // Max callback retries

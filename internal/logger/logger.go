@@ -102,6 +102,11 @@ func Info(msg string, attrs ...any) {
 	logger.Info(fmt.Sprintf(msg, attrs...))
 }
 
+// Warn logs a warning message (without context).
+func Warn(msg string, attrs ...any) {
+	logger.Warn(fmt.Sprintf(msg, attrs...))
+}
+
 // Error logs an error message (without context).
 func Error(msg string, attrs ...any) {
 	logger.Error(fmt.Sprintf(msg, attrs...))

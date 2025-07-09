@@ -26,34 +26,30 @@ func New(addr string, db int) cache.Client {
 }
 
 // Get retrieves a value by key from Redis.
-func (r *redisRepository) Get(key string) (string, error) {
-	return r.client.Get(context.Background(), key).Result()
+func (r *redisRepository) Get(ctx context.Context, key string) (string, error) {
+	return r.client.Get(ctx, key).Result()
 }
 
 // Set sets a value with expiration in Redis.
-func (r *redisRepository) Set(key string, value any, expiration time.Duration) error {
-	return r.client.Set(context.Background(), key, value, expiration).Err()
+func (r *redisRepository) Set(ctx context.Context, key string, value any, expiration time.Duration) error {
+	return r.client.Set(ctx, key, value, expiration).Err()
 }
 
 // Delete removes a key from Redis.
-func (r *redisRepository) Delete(key string) error {
-	return r.client.Del(context.Background(), key).Err()
+func (r *redisRepository) Delete(ctx context.Context, key string) error {
+	return r.client.Del(ctx, key).Err()
 }
 
-// GetByPrefix retrieves all key-value pairs with the given prefix from Redis.
-func (r *redisRepository) GetByPrefix(prefix string) (map[string]string, error) {
+func (r *redisRepository) ScanPrefix(ctx context.Context, prefix string) (map[string]string, error) {
 	result := make(map[string]string)
-	iter := r.client.Scan(context.Background(), 0, prefix+"*", 0).Iterator()
-	for iter.Next(context.Background()) {
+	iter := r.client.Scan(ctx, 0, prefix+"*", 0).Iterator()
+	for iter.Next(ctx) {
 		key := iter.Val()
-		value, err := r.client.Get(context.Background(), key).Result()
+		value, err := r.client.Get(ctx, key).Result()
 		if err != nil {
-			return nil, err
+			continue
 		}
 		result[key] = value
 	}
-	if err := iter.Err(); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return result, iter.Err()
 }

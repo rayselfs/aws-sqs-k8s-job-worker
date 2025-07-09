@@ -26,14 +26,11 @@ func New(addr, key string, db int) *RedisActions {
 }
 
 // GetMessages pops messages from the Redis queue and unmarshals them into SQS messages.
-func (q *RedisActions) GetMessages() ([]types.Message, error) {
+func (q *RedisActions) GetMessages(ctx context.Context) ([]types.Message, error) {
 	var messages []types.Message
 
 	for i := 0; i < int(config.Env.QueueWorkerPoolSize); i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), config.Env.QueueRedisWaitTimeoutDuration)
-
 		res, err := q.Client.LPop(ctx, q.Key).Result()
-		cancel()
 
 		if err == redis.Nil {
 			break
@@ -55,7 +52,7 @@ func (q *RedisActions) GetMessages() ([]types.Message, error) {
 }
 
 // DeleteMessage is a no-op for Redis since LPop already removes the message.
-func (q *RedisActions) DeleteMessage(msg types.Message) error {
+func (q *RedisActions) DeleteMessage(ctx context.Context, msg types.Message) error {
 	// LPop already removed, no need to delete
 	return nil
 }

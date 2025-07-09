@@ -10,13 +10,15 @@ import (
 	"time"
 
 	"aws-sqs-k8s-job-worker/config"
+	"aws-sqs-k8s-job-worker/internal/k8s"
+	"aws-sqs-k8s-job-worker/internal/logger"
 )
 
 // RequestBody represents the body of a callback request.
 type RequestBody struct {
-	ID     string         `json:"id"`
-	Status int            `json:"status"`
-	Detail map[string]any `json:"detail"`
+	ID     string             `json:"id"`
+	Status k8s.CallbackStatus `json:"status"`
+	Detail map[string]any     `json:"detail"`
 }
 
 // ErrorDetail provides error code and message for callback responses.
@@ -26,7 +28,7 @@ type ErrorDetail struct {
 }
 
 var (
-	ERROR_CODE_JOB_NAME_INVALID           = "A101"
+	// ERROR_CODE_JOB_NAME_INVALID           = "A101"
 	ERROR_CODE_JOB_EXIST_WITH_NEW_MESSAGE = "A102"
 	ERROR_CODE_JOB_CREATE_FAILED          = "A103"
 	ERROR_CODE_JOB_POD_START_FAILED       = "A104"
@@ -34,10 +36,32 @@ var (
 	ERROR_CODE_JOB_WATCH_FAILED           = "A106"
 	ERROR_CODE_JOB_GET_DETAIL_FAILED      = "A107"
 	ERROR_CODE_JOB_RUN_FAILED             = "A108"
+	ERROR_CODE_JOB_GET                    = "A109"
 )
 
+func Send(ctx context.Context, jobMsg k8s.JobMessage, status k8s.CallbackStatus, detail map[string]any) {
+	if jobMsg.Webhook == nil {
+		return
+	}
+
+	requestBody := RequestBody{
+		ID:     jobMsg.ID,
+		Status: status,
+		Detail: detail,
+	}
+
+	resp, err := requestBody.Post(ctx, jobMsg.Webhook.URL)
+	if err != nil {
+		logger.ErrorCtx(ctx, "callback error for job %s: %s", jobMsg.ID, err.Error())
+		return
+	}
+
+	logger.InfoCtx(ctx, "callback sent, status: %d, jobID: %s", status, jobMsg.ID)
+	resp.Body.Close()
+}
+
 // Post sends the callback request to the specified URL with retry and timeout logic.
-func (body RequestBody) Post(url string) (*http.Response, error) {
+func (body RequestBody) Post(ctx context.Context, url string) (*http.Response, error) {
 	jsonData, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -48,7 +72,7 @@ func (body RequestBody) Post(url string) (*http.Response, error) {
 	maxDelay := config.Env.CallbackMaxDelayDuration
 	totalTimeout := config.Env.CallbackTotalTimeoutDuration
 
-	ctx, cancel := context.WithTimeout(context.Background(), totalTimeout)
+	timeoutCtx, cancel := context.WithTimeout(ctx, totalTimeout)
 	defer cancel()
 
 	client := &http.Client{}
@@ -56,7 +80,7 @@ func (body RequestBody) Post(url string) (*http.Response, error) {
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+		req, err := http.NewRequestWithContext(timeoutCtx, "POST", url, bytes.NewBuffer(jsonData))
 		if err != nil {
 			lastErr = err
 			break
