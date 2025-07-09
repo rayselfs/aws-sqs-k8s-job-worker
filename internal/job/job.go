@@ -48,6 +48,7 @@ func (record *Record) Execution(ctx context.Context, cacheClient cache.Client) {
 			err, errorCode := record.handleJobCreated(ctx)
 			if err != nil {
 				record.sendCallbackErr(ctx, errorCode, err)
+				return
 			}
 
 			record.Status = utils.StatusJobRunning
@@ -58,6 +59,7 @@ func (record *Record) Execution(ctx context.Context, cacheClient cache.Client) {
 			err, errorCode := record.handleJobRunning(ctx)
 			if err != nil {
 				record.sendCallbackErr(ctx, errorCode, err)
+				return
 			}
 
 			record.Status = utils.StatusJobDone
