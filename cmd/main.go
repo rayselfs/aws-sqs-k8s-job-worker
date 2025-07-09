@@ -73,7 +73,7 @@ func initQueue(ctx context.Context) (queue.QueueClient, error) {
 		logger.Info("Using Redis queue")
 		return redisQueue.New(config.Env.QueueRedisEndpoint, config.Env.QueueRedisKeyPrefix, config.Env.QueueRedisDB), nil
 	case "sqs":
-		q, err := sqs.New(ctx, config.Env.QueueAwsSqs, config.Env.QueueAwsSqsUrl)
+		q, err := sqs.New(ctx, config.Env.QueueAwsSqsRegion, config.Env.QueueAwsSqsUrl)
 		if err != nil {
 			return nil, fmt.Errorf("unable to initialize SQS: %w", err)
 		}
