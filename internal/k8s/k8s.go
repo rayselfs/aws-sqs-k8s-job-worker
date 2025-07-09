@@ -56,19 +56,19 @@ type JobMessage struct {
 
 // Job defines the Kubernetes Job spec and related options.
 type Job struct {
-	PrefixName              string        `json:"prefixName" validate:"required"`                            // Job name prefix
-	Namespace               string        `json:"namespace" validate:"required"`                             // Namespace
-	TTLSecondsAfterFinished int32         `json:"ttlSecondsAfterFinished" validate:"required,gt=60,lt=120"`  // TTL after job finished
-	ActiveDeadlineSeconds   int64         `json:"activeDeadlineSeconds" validate:"required,gt=120,lt=86400"` // Max job duration
-	BackoffLimit            int32         `json:"backoffLimit"`                                              // Retry limit
-	Image                   string        `json:"image" validate:"required"`                                 // Container image
-	Command                 []string      `json:"command" validate:"required"`                               // Command to run
-	Resources               *Resources    `json:"resources"`                                                 // Resource requests/limits
-	ServiceAccount          *string       `json:"serviceAccount"`                                            // Service account
-	Volume                  *Volume       `json:"volume"`                                                    // Volume mount
-	NodeSelector            *NodeSelector `json:"nodeSelector"`                                              // Node selector
-	Toleration              *Toleration   `json:"toleration"`                                                // Toleration
-	GpuEnable               bool          `json:"gpuEnable"`                                                 // Use GPU
+	PrefixName              string        `json:"prefixName" validate:"required"`                              // Job name prefix
+	Namespace               string        `json:"namespace" validate:"required"`                               // Namespace
+	TTLSecondsAfterFinished int32         `json:"ttlSecondsAfterFinished" validate:"required,gte=60,lte=120"`  // TTL after job finished
+	ActiveDeadlineSeconds   int64         `json:"activeDeadlineSeconds" validate:"required,gte=120,lte=86400"` // Max job duration
+	BackoffLimit            int32         `json:"backoffLimit"`                                                // Retry limit
+	Image                   string        `json:"image" validate:"required"`                                   // Container image
+	Command                 []string      `json:"command" validate:"required"`                                 // Command to run
+	Resources               *Resources    `json:"resources"`                                                   // Resource requests/limits
+	ServiceAccount          *string       `json:"serviceAccount"`                                              // Service account
+	Volume                  *Volume       `json:"volume"`                                                      // Volume mount
+	NodeSelector            *NodeSelector `json:"nodeSelector"`                                                // Node selector
+	Toleration              *Toleration   `json:"toleration"`                                                  // Toleration
+	GpuEnable               bool          `json:"gpuEnable"`                                                   // Use GPU
 }
 
 // Resources defines CPU and memory requests/limits.
