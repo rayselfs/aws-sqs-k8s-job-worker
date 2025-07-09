@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"go.opentelemetry.io/otel/trace"
+	"k8s.io/klog/v2"
 )
 
 // logger is the global slog.Logger instance.
@@ -24,9 +25,21 @@ const (
 	ctxSpanID  ctxKey = "spanid"  // Context key for span ID
 )
 
+type slogWriter struct {
+	logger *slog.Logger
+}
+
+func (w slogWriter) Write(p []byte) (n int, err error) {
+	w.logger.Info(string(p))
+	return len(p), nil
+}
+
 // Setup initializes the global logger with JSON handler.
 func Setup() error {
 	logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	klog.ClearLogger()
+	klog.SetOutput(slogWriter{logger: logger})
 	return nil
 }
 
