@@ -315,6 +315,32 @@ func (jobMsg JobMessage) GetJob(ctx context.Context, jobName string) (*batchV1.J
 	return Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Get(ctx, jobName, metaV1.GetOptions{})
 }
 
+// getJobPods waits for the first pod belonging to a Job, with timeout.
+func (jobMsg JobMessage) getJobPods(ctx context.Context, jobName string) (*coreV1.Pod, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			return nil, fmt.Errorf("timed out waiting for pod: %w", timeoutCtx.Err())
+		default:
+			pods, err := Clientset.CoreV1().Pods(jobMsg.Job.Namespace).List(timeoutCtx, metaV1.ListOptions{
+				LabelSelector: fmt.Sprintf("job-name=%s", jobName),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to list pods for job %s: %w", jobName, err)
+			}
+
+			if len(pods.Items) > 0 {
+				return &pods.Items[0], nil
+			}
+
+			time.Sleep(2 * time.Second)
+		}
+	}
+}
+
 // JobExists checks if a job with the given name already exists in the specified namespace.
 func (jobMsg JobMessage) JobExists(ctx context.Context, jobName string) (bool, error) {
 	_, err := jobMsg.GetJob(ctx, jobName)
@@ -329,8 +355,26 @@ func (jobMsg JobMessage) JobExists(ctx context.Context, jobName string) (bool, e
 	return true, nil
 }
 
+func (jobMsg JobMessage) JobCheck(ctx context.Context, jobName string) error {
+	exist, err := jobMsg.JobExists(ctx, jobName)
+	if err != nil {
+		err = fmt.Errorf("failed to check job existence: %w", err)
+		return err
+	}
+	if !exist {
+		err = fmt.Errorf("job %s not exists", jobName)
+		return err
+	}
+	return nil
+}
+
 // WatchPodRunning watches for the running phase of a specific pod.
 func (jobMsg JobMessage) WatchPodRunning(ctx context.Context, jobName string) (*coreV1.Pod, error) {
+	err := jobMsg.JobCheck(ctx, jobName)
+	if err != nil {
+		return nil, err
+	}
+
 	pod, err := jobMsg.getJobPods(ctx, jobName)
 	if err != nil {
 		return nil, err
@@ -383,34 +427,13 @@ func (jobMsg JobMessage) WatchPodRunning(ctx context.Context, jobName string) (*
 	}
 }
 
-// getJobPods waits for the first pod belonging to a Job, with timeout.
-func (jobMsg JobMessage) getJobPods(ctx context.Context, jobName string) (*coreV1.Pod, error) {
-	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	for {
-		select {
-		case <-timeoutCtx.Done():
-			return nil, fmt.Errorf("timed out waiting for pod: %w", timeoutCtx.Err())
-		default:
-			pods, err := Clientset.CoreV1().Pods(jobMsg.Job.Namespace).List(timeoutCtx, metaV1.ListOptions{
-				LabelSelector: fmt.Sprintf("job-name=%s", jobName),
-			})
-			if err != nil {
-				return nil, fmt.Errorf("failed to list pods for job %s: %w", jobName, err)
-			}
-
-			if len(pods.Items) > 0 {
-				return &pods.Items[0], nil
-			}
-
-			time.Sleep(2 * time.Second)
-		}
-	}
-}
-
 // WatchJobCompletion watches for the completion of a Job and handles success/failure conditions.
 func (jobMsg JobMessage) WatchJobCompletion(ctx context.Context, jobName string) error {
+	err := jobMsg.JobCheck(ctx, jobName)
+	if err != nil {
+		return err
+	}
+
 	lw := cache.NewListWatchFromClient(
 		Clientset.BatchV1().RESTClient(),
 		"jobs",
@@ -486,6 +509,11 @@ func (jobMsg JobMessage) WatchJobCompletion(ctx context.Context, jobName string)
 
 // GetJobDetail retrieves the execution detail of a job.
 func (jobMsg JobMessage) GetJobDetail(ctx context.Context, jobName string) (jobStatus CallbackStatus, duration time.Duration, err error) {
+	err = jobMsg.JobCheck(ctx, jobName)
+	if err != nil {
+		return
+	}
+
 	job, err := jobMsg.GetJob(ctx, jobName)
 	if err != nil {
 		return
@@ -508,6 +536,11 @@ func (jobMsg JobMessage) GetJobDetail(ctx context.Context, jobName string) (jobS
 
 // GetJobFailureDetail retrieves failure details for a job and its pods.
 func (jobMsg JobMessage) GetJobFailureDetail(ctx context.Context, jobName string) (*JobFailureDetail, error) {
+	err := jobMsg.JobCheck(ctx, jobName)
+	if err != nil {
+		return nil, err
+	}
+
 	result := &JobFailureDetail{}
 	job, err := jobMsg.GetJob(ctx, jobName)
 	if err != nil {
