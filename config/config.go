@@ -61,7 +61,7 @@ type EnvVariable struct {
 
 	QueueType                  string `env:"QUEUE_TYPE" envDefault:"redis"`                   // Queue type: redis or sqs
 	QueueWorkerPoolSize        int32  `env:"QUEUE_WORKER_POOL_SIZE" envDefault:"10"`          // Worker pool size
-	QueueAwsSqs                string `env:"QUEUE_AWS_SQS_REGION"`                            // AWS SQS region
+	QueueAwsSqsRegion          string `env:"QUEUE_AWS_SQS_REGION"`                            // AWS SQS region
 	QueueAwsSqsUrl             string `env:"QUEUE_AWS_SQS_URL"`                               // AWS SQS queue URL
 	QueueAwsSqsWaitTimeSeconds int32  `env:"QUEUE_AWS_SQS_WAIT_TIME_SECONDS" envDefault:"20"` // SQS long polling wait time (seconds)
 	QueueRedisEndpoint         string `env:"REDIS_QUEUE_ENDPOINT"`                            // Redis endpoint for queue
