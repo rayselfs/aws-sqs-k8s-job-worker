@@ -467,11 +467,12 @@ func (jobMsg JobMessage) WatchJobCompletion(ctx context.Context, jobName string)
 			case cond.Type == batchV1.JobFailed && cond.Status == coreV1.ConditionTrue:
 				logger.ErrorCtx(timeoutCtx, "job failed: %s - %s", cond.Reason, cond.Message)
 				go func() {
-					deleteCtx, deleteCancel := context.WithTimeout(timeoutCtx, config.Env.KubernetesClientDuration)
+					deleteCtx, deleteCancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
 					defer deleteCancel()
 
-					if err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Delete(deleteCtx, jobName, metaV1.DeleteOptions{}); err != nil {
-						logger.ErrorCtx(timeoutCtx, "failed to delete failed job: %v", err)
+					err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Delete(deleteCtx, jobName, metaV1.DeleteOptions{})
+					if err != nil {
+						logger.ErrorCtx(deleteCtx, "failed to delete failed job: %v", err)
 					}
 				}()
 
