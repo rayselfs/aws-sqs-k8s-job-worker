@@ -2,201 +2,92 @@ package main
 
 import (
 	"aws-sqs-k8s-job-worker/config"
-	"aws-sqs-k8s-job-worker/interanl/app/service/job"
-	"aws-sqs-k8s-job-worker/interanl/pkg/aws/sqs"
-	"aws-sqs-k8s-job-worker/interanl/pkg/k8s"
-	"aws-sqs-k8s-job-worker/interanl/pkg/rdb"
+	"aws-sqs-k8s-job-worker/internal/cache"
+	redisCache "aws-sqs-k8s-job-worker/internal/cache/redis"
+	"aws-sqs-k8s-job-worker/internal/k8s"
+	"aws-sqs-k8s-job-worker/internal/logger"
+	"aws-sqs-k8s-job-worker/internal/metrics"
+	"aws-sqs-k8s-job-worker/internal/queue"
+	redisQueue "aws-sqs-k8s-job-worker/internal/queue/redis"
+	"aws-sqs-k8s-job-worker/internal/queue/sqs"
+	"aws-sqs-k8s-job-worker/internal/server"
+	"aws-sqs-k8s-job-worker/internal/worker"
 	"context"
-	"encoding/json"
-	"log"
-	"net/http"
+	"fmt"
 	"os"
-	"sync/atomic"
-	"time"
+	"os/signal"
+	"syscall"
 
-	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/go-playground/validator/v10"
-	"k8s.io/client-go/tools/leaderelection"
-	"k8s.io/klog/v2"
 )
 
-var (
-	SqsActions sqs.SqsActions
-	healthy    int32 = 1 // Atomic flag for health status (1 = healthy, 0 = unhealthy)
-)
-
+// main.go
 func main() {
-	if err := config.Setup(); err != nil {
-		klog.Fatalf("unable to set config: %v", err)
-	}
-
-	if err := rdb.Setup(); err != nil {
-		klog.Fatalf("unable to set redis: %v", err)
-	}
-
-	if err := k8s.Setup(); err != nil {
-		klog.Fatalf("unable to set k8s: %v\n", err)
-	}
-
-	http.HandleFunc("/healthz", healthHandler)
-	go func() {
-		log.Println("Starting health check server on port 8080")
-		log.Fatal(http.ListenAndServe(":8080", nil))
-	}()
-
-	id := config.Env.PodName
-	lock := k8s.GetLeaseLock(id)
-
-	leaderElectorConfig := leaderelection.LeaderElectionConfig{
-		Lock:          lock,
-		LeaseDuration: 15 * time.Second,
-		RenewDeadline: 10 * time.Second,
-		RetryPeriod:   2 * time.Second,
-		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(ctx context.Context) {
-				klog.Info("started leading")
-				handleRecords()
-				handleMessages()
-			},
-			OnStoppedLeading: func() {
-				klog.Info("stopped leading")
-				os.Exit(0)
-			},
-			OnNewLeader: func(identity string) {
-				if identity == id {
-					klog.Info("current New leader")
-				} else {
-					klog.Infof("new leader elected: %s\n", identity)
-				}
-			},
-		},
-	}
-
-	elector, err := leaderelection.NewLeaderElector(leaderElectorConfig)
-	if err != nil {
-		log.Fatalf("error creating leader elector: %v", err)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go elector.Run(ctx)
+	// handle SIGINT, SIGTERM
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		<-sig
+		cancel()
+	}()
 
-	// Wait indefinitely
-	select {}
-}
-
-// Health check endpoint
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	if atomic.LoadInt32(&healthy) == 1 {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	} else {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Service Unhealthy"))
-	}
-}
-
-// handleMessages handle messages in SQS
-func handleMessages() {
-	sqsClient := sqs.Setup(config.Env.AWSSQSRegion)
-
-	SqsActions = sqs.SqsActions{
-		SqsClient: sqsClient,
-		QueueURL:  &config.Env.AWSSQSURL,
+	if err := logger.Setup(); err != nil {
+		panic(fmt.Sprintf("logger setup failed: %s", err))
 	}
 
-	klog.Info("start sqs polling")
-	for {
-		messages, err := SqsActions.GetMessages()
-		if err != nil {
-			klog.Fatalf("unable to get messages from queue %v, %v", SqsActions.QueueURL, err)
-		}
-
-		if len(messages) > 0 {
-			message := messages[0]
-			go messageProcess(message)
-		}
-
-		time.Sleep(time.Second * time.Duration(config.Env.PollingInterval))
+	if err := config.Setup(); err != nil {
+		logger.Fatal("config setup failed: %s", err.Error())
 	}
-}
 
-// handleRecords handle records in redis
-func handleRecords() {
-	rdbList, err := rdb.GetByPrefix(config.Env.RedisJobKeyPrefix)
+	if err := k8s.Setup(); err != nil {
+		logger.Fatal("k8s setup failed: %s", err.Error())
+	}
+
+	queueClient, err := initQueue(ctx)
 	if err != nil {
-		klog.Fatalf("unable to get list in redis: %v", err)
+		logger.Fatal("queue init failed: %s", err)
 	}
 
-	klog.Info("start record process")
-	for _, data := range rdbList {
-		go recordProcess(data)
+	worker := &worker.JobWorker{
+		Queue:     queueClient,
+		Cache:     initCache(),
+		Validator: initValidator(),
+	}
+
+	metrics.Setup()
+
+	server.StartHTTPServer(ctx)
+
+	worker.StartLeaderElection(ctx)
+
+	<-ctx.Done()
+	logger.Info("Shutting down gracefully...")
+}
+
+func initQueue(ctx context.Context) (queue.QueueClient, error) {
+	switch config.Env.QueueType {
+	case "redis":
+		logger.Info("Using Redis queue")
+		return redisQueue.New(config.Env.QueueRedisEndpoint, config.Env.QueueRedisKeyPrefix, config.Env.QueueRedisDB), nil
+	case "sqs":
+		q, err := sqs.New(ctx, config.Env.QueueAwsSqs, config.Env.QueueAwsSqsUrl)
+		if err != nil {
+			return nil, fmt.Errorf("unable to initialize SQS: %w", err)
+		}
+		logger.Info("Using AWS SQS queue")
+		return q, nil
+	default:
+		return nil, fmt.Errorf("unsupported queue type: %s", config.Env.QueueType)
 	}
 }
 
-// messageProcess process message from SQS
-func messageProcess(message types.Message) {
-	klog.Info("message received, ID:", *message.MessageId)
-	klog.Info("message body:", *message.Body)
-
-	var jobMsg k8s.JobMessage
-	if err := json.Unmarshal([]byte(*message.Body), &jobMsg); err != nil {
-		klog.Errorf("failed to unmarshal job message: %v", err)
-		SqsActions.DeleteMessage(message)
-		return
-	}
-
-	validator := validator.New()
-	if err := validator.Struct(jobMsg); err != nil {
-		klog.Errorf("job message validation failed: %v", err)
-		SqsActions.DeleteMessage(message)
-		return
-	}
-
-	if _, err := rdb.Get(config.Env.RedisJobKeyPrefix + jobMsg.ID); err == nil {
-		klog.Errorf("job %v has been executed", jobMsg.ID)
-		SqsActions.DeleteMessage(message)
-		return
-	}
-
-	// set backoff limit to 0 to avoid job retry
-	jobMsg.Job.BackoffLimit = 0
-	if jobMsg.Job.TTLSecondsAfterFinished == 0 {
-		jobMsg.Job.TTLSecondsAfterFinished = 60
-	}
-
-	record := job.Record{
-		SQSMessage: message,
-		JobMessage: jobMsg,
-		Status:     job.StatusInit,
-	}
-	recordData, _ := json.Marshal(record)
-	rdb.Set(config.Env.RedisJobKeyPrefix+jobMsg.ID, string(recordData), time.Second*time.Duration(config.Env.ActiveDeadlineSecondsMax))
-
-	SqsActions.DeleteMessage(message)
-
-	// process
-	klog.Info("start message process")
-	job.Execution(record)
-
-	if err := rdb.Delete(config.Env.RedisJobKeyPrefix + jobMsg.ID); err != nil {
-		klog.Errorf("unable to delete job %v from redis: %v", jobMsg.ID, err)
-	}
+func initCache() cache.Client {
+	return redisCache.New(config.Env.CacheRedisEndpoint, config.Env.CacheRedisDB)
 }
 
-// recordProcess process message from redis
-func recordProcess(recordData string) {
-	var record job.Record
-	if err := json.Unmarshal([]byte(recordData), &record); err != nil {
-		klog.Errorf("failed to unmarshal record: %v", err)
-		return
-	}
-
-	klog.Info("Record received, ID:", record.JobMessage.ID)
-	job.Execution(record)
-
-	if err := rdb.Delete(config.Env.RedisJobKeyPrefix + record.JobMessage.ID); err != nil {
-		klog.Errorf("unable to delete job %v from redis: %v", record.JobMessage.ID, err)
-	}
+func initValidator() *validator.Validate {
+	return validator.New()
 }
