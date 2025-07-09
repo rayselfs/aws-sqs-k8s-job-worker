@@ -68,7 +68,6 @@ type Job struct {
 	Volume                  *Volume       `json:"volume"`                                                    // Volume mount
 	NodeSelector            *NodeSelector `json:"nodeSelector"`                                              // Node selector
 	Toleration              *Toleration   `json:"toleration"`                                                // Toleration
-	Fargate                 *Fargate      `json:"fargate"`                                                   // Fargate profile
 	GpuEnable               bool          `json:"gpuEnable"`                                                 // Use GPU
 }
 
@@ -98,12 +97,6 @@ type NodeSelector struct {
 
 // Toleration defines a pod toleration.
 type Toleration struct {
-	Key   string `json:"key" validate:"required"`
-	Value string `json:"value" validate:"required"`
-}
-
-// Fargate defines a Fargate profile selector.
-type Fargate struct {
 	Key   string `json:"key" validate:"required"`
 	Value string `json:"value" validate:"required"`
 }
