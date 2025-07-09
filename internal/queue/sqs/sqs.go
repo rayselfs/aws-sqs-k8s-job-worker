@@ -2,7 +2,6 @@ package sqs
 
 import (
 	"context"
-	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -19,9 +18,9 @@ type SqsActions struct {
 }
 
 // New creates a new SqsActions instance.
-func New(region string, queueUrl string) (*SqsActions, error) {
+func New(ctx context.Context, region string, queueUrl string) (*SqsActions, error) {
 	// Load the Shared AWS Configuration
-	cfg, err := awsconfig.LoadDefaultConfig(context.TODO(), awsconfig.WithRegion(region))
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
 		return nil, err
 	}
@@ -31,9 +30,7 @@ func New(region string, queueUrl string) (*SqsActions, error) {
 }
 
 // GetMessages receives messages from the SQS queue.
-func (a *SqsActions) GetMessages() ([]types.Message, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.Env.QueueAwsSqsWaitTimeSeconds)*time.Second)
-	defer cancel()
+func (a *SqsActions) GetMessages(ctx context.Context) ([]types.Message, error) {
 	var messages []types.Message
 	maxNum := int32(10)
 	if config.Env.QueueWorkerPoolSize > 0 && config.Env.QueueWorkerPoolSize <= 10 {
@@ -53,8 +50,8 @@ func (a *SqsActions) GetMessages() ([]types.Message, error) {
 }
 
 // DeleteMessage deletes a message from the SQS queue.
-func (a *SqsActions) DeleteMessage(msg types.Message) error {
-	_, err := a.SqsClient.DeleteMessage(context.TODO(), &sqs.DeleteMessageInput{
+func (a *SqsActions) DeleteMessage(ctx context.Context, msg types.Message) error {
+	_, err := a.SqsClient.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 		QueueUrl:      a.QueueURL,
 		ReceiptHandle: msg.ReceiptHandle,
 	})

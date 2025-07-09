@@ -34,13 +34,16 @@ var (
 	ErrJobFailed       = errors.New("job failed")             // Job failed
 )
 
+type CallbackStatus int
+
+const pvcName = "persistent-storage"
+
 const (
-	pvcName            = "persistent-storage" // Default PVC name
-	StatusJobCreated   = 0                    // Job created
-	StatusPodRunning   = 1                    // Pod running
-	StatusJobCompleted = 2                    // Job completed
-	StatusJobFailed    = 3                    // Job failed
-	StatusException    = 99                   // Exception status
+	StatusJobCreated CallbackStatus = iota
+	StatusPodRunning
+	StatusJobCompleted
+	StatusJobFailed
+	StatusException
 )
 
 // JobMessage represents a job request with metadata and webhook.
@@ -53,20 +56,20 @@ type JobMessage struct {
 
 // Job defines the Kubernetes Job spec and related options.
 type Job struct {
-	PrefixName              string        `json:"prefixName" validate:"required"`                           // Job name prefix
-	Namespace               string        `json:"namespace" validate:"required"`                            // Namespace
-	TTLSecondsAfterFinished int32         `json:"ttlSecondsAfterFinished" validate:"required gt=30,lt=120"` // TTL after job finished
-	ActiveDeadlineSeconds   int64         `json:"activeDeadlineSeconds" validate:"required gt=60,lt=86400"` // Max job duration
-	BackoffLimit            int32         `json:"backoffLimit"`                                             // Retry limit
-	Image                   string        `json:"image" validate:"required"`                                // Container image
-	Command                 []string      `json:"command" validate:"required"`                              // Command to run
-	Resources               *Resources    `json:"resources"`                                                // Resource requests/limits
-	ServiceAccount          *string       `json:"serviceAccount"`                                           // Service account
-	Volume                  *Volume       `json:"volume"`                                                   // Volume mount
-	NodeSelector            *NodeSelector `json:"nodeSelector"`                                             // Node selector
-	Toleration              *Toleration   `json:"toleration"`                                               // Toleration
-	Fargate                 *Fargate      `json:"fargate"`                                                  // Fargate profile
-	GpuEnable               bool          `json:"gpuEnable"`                                                // Use GPU
+	PrefixName              string        `json:"prefixName" validate:"required"`                            // Job name prefix
+	Namespace               string        `json:"namespace" validate:"required"`                             // Namespace
+	TTLSecondsAfterFinished int32         `json:"ttlSecondsAfterFinished" validate:"required gt=60,lt=120"`  // TTL after job finished
+	ActiveDeadlineSeconds   int64         `json:"activeDeadlineSeconds" validate:"required gt=120,lt=86400"` // Max job duration
+	BackoffLimit            int32         `json:"backoffLimit"`                                              // Retry limit
+	Image                   string        `json:"image" validate:"required"`                                 // Container image
+	Command                 []string      `json:"command" validate:"required"`                               // Command to run
+	Resources               *Resources    `json:"resources"`                                                 // Resource requests/limits
+	ServiceAccount          *string       `json:"serviceAccount"`                                            // Service account
+	Volume                  *Volume       `json:"volume"`                                                    // Volume mount
+	NodeSelector            *NodeSelector `json:"nodeSelector"`                                              // Node selector
+	Toleration              *Toleration   `json:"toleration"`                                                // Toleration
+	Fargate                 *Fargate      `json:"fargate"`                                                   // Fargate profile
+	GpuEnable               bool          `json:"gpuEnable"`                                                 // Use GPU
 }
 
 // Resources defines CPU and memory requests/limits.
@@ -112,17 +115,18 @@ type Webhook struct {
 
 // JobFailureDetail holds job and pod failure reasons/messages.
 type JobFailureDetail struct {
-	JobReason   string       // Job failure reason
-	JobMessage  string       // Job failure message
-	PodFailures []PodFailure // List of pod failures
+	JobReason   string
+	JobMessage  string
+	PodFailures []PodFailure
 }
 
 // PodFailure holds details about a failed pod.
 type PodFailure struct {
-	PodName  string // Pod name
-	ExitCode int32  // Exit code
-	Reason   string // Failure reason
-	Message  string // Failure message
+	PodName   string
+	Container string
+	ExitCode  int32
+	Reason    string
+	Message   string
 }
 
 // SetClient creates a Kubernetes clientset.
@@ -304,43 +308,39 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 }
 
 // ApplyJob creates a Kubernetes Job in the specified namespace.
-func (jobMsg JobMessage) ApplyJob(jobName string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
-	defer cancel()
+func (jobMsg JobMessage) ApplyJob(ctx context.Context, jobName string) error {
 	_, err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Create(ctx, jobMsg.getJobSpec(jobName), metaV1.CreateOptions{})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create job %s: %w", jobName, err)
 	}
 
 	return nil
 }
 
 // GetJob retrieves a Job by name from the specified namespace.
-func (jobMsg JobMessage) GetJob(jobName string) (*batchV1.Job, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
-	defer cancel()
+func (jobMsg JobMessage) GetJob(ctx context.Context, jobName string) (*batchV1.Job, error) {
 	return Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Get(ctx, jobName, metaV1.GetOptions{})
 }
 
 // JobExists checks if a job with the given name already exists in the specified namespace.
-func (jobMsg JobMessage) JobExists(jobName string) bool {
-	_, err := jobMsg.GetJob(jobName)
+func (jobMsg JobMessage) JobExists(ctx context.Context, jobName string) (bool, error) {
+	_, err := jobMsg.GetJob(ctx, jobName)
 	if err != nil {
 		if k8sErrors.IsNotFound(err) {
-			return false
+			return false, nil
 		}
 
 		logger.Error("Failed to get job: %s", err.Error())
-		return true // exception case, assume job exists
+		return false, fmt.Errorf("failed to get job %s: %w", jobName, err)
 	}
-	return true
+	return true, nil
 }
 
 // WatchPodRunning watches for the running phase of a specific pod.
-func (jobMsg JobMessage) WatchPodRunning(logCtx context.Context, jobName string) (pod *coreV1.Pod, err error) {
-	pod, err = jobMsg.getJobPods(logCtx, jobName)
+func (jobMsg JobMessage) WatchPodRunning(ctx context.Context, jobName string) (*coreV1.Pod, error) {
+	pod, err := jobMsg.getJobPods(ctx, jobName)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	lw := cache.NewListWatchFromClient(
@@ -350,76 +350,74 @@ func (jobMsg JobMessage) WatchPodRunning(logCtx context.Context, jobName string)
 		fields.OneTermEqualSelector("metadata.name", pod.Name),
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), config.Env.PodStartTimeoutDuration)
+	timeoutCtx, cancel := context.WithTimeout(ctx, config.Env.PodStartTimeoutDuration)
 	defer cancel()
-	stopCh := make(chan struct{})
+
+	errCh := make(chan error, 1)
+
+	handle := func(p *coreV1.Pod) {
+		if timeoutCtx.Err() != nil {
+			return
+		}
+		if p.Status.Phase == coreV1.PodRunning {
+			logger.InfoCtx(timeoutCtx, "pod running")
+			select {
+			case errCh <- nil:
+			default:
+			}
+		}
+	}
 
 	_, controller := cache.NewInformerWithOptions(cache.InformerOptions{
 		ListerWatcher: lw,
 		ObjectType:    &coreV1.Pod{},
 		ResyncPeriod:  0,
 		Handler: cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj any) {
-				logger.InfoCtx(logCtx, "pod created: %s", obj.(*coreV1.Pod).GetName())
-			},
-			UpdateFunc: func(oldObj, newObj any) {
-				pod := newObj.(*coreV1.Pod)
-				if pod.Status.Phase == coreV1.PodRunning {
-					logger.InfoCtx(logCtx, "pod running")
-					close(stopCh)
-				}
-			},
+			AddFunc:    func(obj any) { handle(obj.(*coreV1.Pod)) },
+			UpdateFunc: func(_, newObj any) { handle(newObj.(*coreV1.Pod)) },
 		},
 	})
 
-	go controller.Run(stopCh)
+	go controller.Run(timeoutCtx.Done())
 
 	select {
-	case <-stopCh:
-		// 正常結束
-	case <-ctx.Done():
-		logger.ErrorCtx(logCtx, "pod start timeout")
-		err = ErrPodStartTimeout
-		close(stopCh)
+	case err = <-errCh:
+		cancel()
+		return pod, nil
+	case <-timeoutCtx.Done():
+		logger.ErrorCtx(timeoutCtx, "pod start timeout")
+		return nil, ErrPodStartTimeout
 	}
-	return
 }
 
 // getJobPods waits for the first pod belonging to a Job, with timeout.
-func (jobMsg JobMessage) getJobPods(logCtx context.Context, jobName string) (*coreV1.Pod, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
+func (jobMsg JobMessage) getJobPods(ctx context.Context, jobName string) (*coreV1.Pod, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("timeout waiting for pod of job %s in namespace %s", jobName, jobMsg.Job.Namespace)
-
-		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
-			defer cancel()
-			pods, err := Clientset.CoreV1().Pods(jobMsg.Job.Namespace).List(ctx, metaV1.ListOptions{
+		case <-timeoutCtx.Done():
+			return nil, fmt.Errorf("timed out waiting for pod: %w", timeoutCtx.Err())
+		default:
+			pods, err := Clientset.CoreV1().Pods(jobMsg.Job.Namespace).List(timeoutCtx, metaV1.ListOptions{
 				LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 			})
 			if err != nil {
-				logger.WarnCtx(logCtx, "Failed to list pods, will retry")
-				continue
+				return nil, fmt.Errorf("failed to list pods for job %s: %w", jobName, err)
 			}
 
-			if pods != nil && len(pods.Items) > 0 {
-				logger.InfoCtx(logCtx, "Found pod for job")
+			if len(pods.Items) > 0 {
 				return &pods.Items[0], nil
 			}
 
-			logger.InfoCtx(logCtx, "No pods found yet, still waiting")
+			time.Sleep(2 * time.Second)
 		}
 	}
 }
 
-func (jobMsg JobMessage) WatchJobCompletion(logCtx context.Context, jobName string) (err error) {
+// WatchJobCompletion watches for the completion of a Job and handles success/failure conditions.
+func (jobMsg JobMessage) WatchJobCompletion(ctx context.Context, jobName string) error {
 	lw := cache.NewListWatchFromClient(
 		Clientset.BatchV1().RESTClient(),
 		"jobs",
@@ -427,59 +425,75 @@ func (jobMsg JobMessage) WatchJobCompletion(logCtx context.Context, jobName stri
 		fields.OneTermEqualSelector("metadata.name", jobName),
 	)
 
-	timeout := time.Duration(jobMsg.Job.ActiveDeadlineSeconds)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(jobMsg.Job.ActiveDeadlineSeconds)*time.Second)
 	defer cancel()
-	stopCh := make(chan struct{})
+
+	errCh := make(chan error, 1)
 	var once sync.Once
+
+	handle := func(job *batchV1.Job) {
+		if timeoutCtx.Err() != nil {
+			return
+		}
+
+		for _, cond := range job.Status.Conditions {
+			switch {
+			case cond.Type == batchV1.JobComplete && cond.Status == coreV1.ConditionTrue:
+				logger.InfoCtx(timeoutCtx, "job succeeded")
+				once.Do(func() {
+					select {
+					case errCh <- nil:
+					case <-timeoutCtx.Done():
+					}
+					cancel()
+				})
+
+			case cond.Type == batchV1.JobFailed && cond.Status == coreV1.ConditionTrue:
+				logger.ErrorCtx(timeoutCtx, "job failed: %s - %s", cond.Reason, cond.Message)
+				go func() {
+					deleteCtx, deleteCancel := context.WithTimeout(timeoutCtx, config.Env.KubernetesClientDuration)
+					defer deleteCancel()
+
+					if err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Delete(deleteCtx, jobName, metaV1.DeleteOptions{}); err != nil {
+						logger.ErrorCtx(timeoutCtx, "failed to delete failed job: %v", err)
+					}
+				}()
+
+				once.Do(func() {
+					select {
+					case errCh <- ErrJobFailed:
+					case <-timeoutCtx.Done():
+					}
+					cancel()
+				})
+			}
+		}
+	}
 
 	_, controller := cache.NewInformerWithOptions(cache.InformerOptions{
 		ListerWatcher: lw,
 		ObjectType:    &batchV1.Job{},
 		ResyncPeriod:  0,
 		Handler: cache.ResourceEventHandlerFuncs{
-			UpdateFunc: func(oldObj, newObj any) {
-				job := newObj.(*batchV1.Job)
-				for _, condition := range job.Status.Conditions {
-					if condition.Type == batchV1.JobComplete && condition.Status == coreV1.ConditionTrue {
-						logger.InfoCtx(logCtx, "job succeeded")
-						once.Do(func() { close(stopCh) })
-						return
-					} else if condition.Type == batchV1.JobFailed && condition.Status == coreV1.ConditionTrue {
-						logger.ErrorCtx(logCtx, "job failed, reason: %v, message: %v", condition.Reason, condition.Message)
-						err = ErrJobFailed
-
-						deletePolicy := metaV1.DeletePropagationForeground
-
-						ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
-						defer cancel()
-						err = Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Delete(ctx, jobName, metaV1.DeleteOptions{
-							PropagationPolicy: &deletePolicy,
-						})
-						once.Do(func() { close(stopCh) })
-						return
-					}
-				}
-			},
+			AddFunc:    func(obj any) { handle(obj.(*batchV1.Job)) },
+			UpdateFunc: func(_, newObj any) { handle(newObj.(*batchV1.Job)) },
 		},
 	})
 
-	go controller.Run(stopCh)
+	go controller.Run(timeoutCtx.Done())
 
 	select {
-	case <-stopCh:
-		// 正常結束
-	case <-ctx.Done():
-		logger.ErrorCtx(logCtx, "job completion timeout")
-		err = ErrJobTimeout
-		once.Do(func() { close(stopCh) })
+	case err := <-errCh:
+		return err
+	case <-timeoutCtx.Done():
+		logger.ErrorCtx(timeoutCtx, "job completion timeout")
+		return ErrJobTimeout
 	}
-	return
 }
 
 // GetJobDetail retrieves the execution detail of a job.
-func (jobMsg JobMessage) GetJobDetail(jobName string) (jobStatus int, duration time.Duration, err error) {
-	job, err := jobMsg.GetJob(jobName)
+func (jobMsg JobMessage) GetJobDetail(ctx context.Context, jobName string) (jobStatus CallbackStatus, duration time.Duration, err error) {
+	job, err := jobMsg.GetJob(ctx, jobName)
 	if err != nil {
 		return
 	}
@@ -500,12 +514,11 @@ func (jobMsg JobMessage) GetJobDetail(jobName string) (jobStatus int, duration t
 }
 
 // GetJobFailureDetail retrieves failure details for a job and its pods.
-func (jobMsg JobMessage) GetJobFailureDetail(jobName string) (*JobFailureDetail, error) {
+func (jobMsg JobMessage) GetJobFailureDetail(ctx context.Context, jobName string) (*JobFailureDetail, error) {
 	result := &JobFailureDetail{}
-
-	job, err := jobMsg.GetJob(jobName)
+	job, err := jobMsg.GetJob(ctx, jobName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get job %s: %w", jobName, err)
 	}
 
 	for _, cond := range job.Status.Conditions {
@@ -515,8 +528,6 @@ func (jobMsg JobMessage) GetJobFailureDetail(jobName string) (*JobFailureDetail,
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), config.Env.KubernetesClientDuration)
-	defer cancel()
 	pods, err := Clientset.CoreV1().Pods(jobMsg.Job.Namespace).List(ctx, metaV1.ListOptions{
 		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 	})
@@ -526,22 +537,24 @@ func (jobMsg JobMessage) GetJobFailureDetail(jobName string) (*JobFailureDetail,
 
 	for _, pod := range pods.Items {
 		for _, status := range pod.Status.ContainerStatuses {
-			if status.State.Terminated != nil {
+			switch {
+			case status.State.Terminated != nil:
 				term := status.State.Terminated
 				result.PodFailures = append(result.PodFailures, PodFailure{
-					PodName:  pod.Name,
-					ExitCode: term.ExitCode,
-					Reason:   term.Reason,
-					Message:  term.Message,
+					PodName:   pod.Name,
+					Container: status.Name,
+					ExitCode:  term.ExitCode,
+					Reason:    term.Reason,
+					Message:   term.Message,
 				})
-			}
-			if status.State.Waiting != nil {
+			case status.State.Waiting != nil && status.State.Waiting.Reason != "ContainerCreating":
 				wait := status.State.Waiting
 				result.PodFailures = append(result.PodFailures, PodFailure{
-					PodName:  pod.Name,
-					ExitCode: 0,
-					Reason:   wait.Reason,
-					Message:  wait.Message,
+					PodName:   pod.Name,
+					Container: status.Name,
+					ExitCode:  0,
+					Reason:    wait.Reason,
+					Message:   wait.Message,
 				})
 			}
 		}
@@ -554,6 +567,5 @@ func (jobMsg JobMessage) GetJobFailureDetail(jobName string) (*JobFailureDetail,
 func hashStringSHA256(s string) string {
 	h := sha256.New()
 	h.Write([]byte(s))
-	hashed := fmt.Sprintf("%x", h.Sum(nil))
-	return hashed[:8]
+	return fmt.Sprintf("%x", h.Sum(nil))[:8]
 }
