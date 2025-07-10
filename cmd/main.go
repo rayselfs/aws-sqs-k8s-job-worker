@@ -1,7 +1,7 @@
 package main
 
 import (
-	"aws-sqs-k8s-job-worker/config"
+	"aws-sqs-k8s-job-worker/configs"
 	"aws-sqs-k8s-job-worker/internal/cache"
 	redisCache "aws-sqs-k8s-job-worker/internal/cache/redis"
 	"aws-sqs-k8s-job-worker/internal/k8s"
@@ -38,7 +38,7 @@ func main() {
 		panic(fmt.Sprintf("logger setup failed: %s", err))
 	}
 
-	if err := config.Setup(); err != nil {
+	if err := configs.Setup(); err != nil {
 		logger.Fatal("config setup failed: %s", err.Error())
 	}
 
@@ -68,24 +68,24 @@ func main() {
 }
 
 func initQueue(ctx context.Context) (queue.QueueClient, error) {
-	switch config.Env.QueueType {
+	switch configs.Env.QueueType {
 	case "redis":
 		logger.Info("Using Redis queue")
-		return redisQueue.New(config.Env.QueueRedisEndpoint, config.Env.QueueRedisKeyPrefix, config.Env.QueueRedisDB), nil
+		return redisQueue.New(configs.Env.QueueRedisEndpoint, configs.Env.QueueRedisKeyPrefix, configs.Env.QueueRedisDB), nil
 	case "sqs":
-		q, err := sqs.New(ctx, config.Env.QueueAwsSqsRegion, config.Env.QueueAwsSqsUrl)
+		q, err := sqs.New(ctx, configs.Env.QueueAwsSqsRegion, configs.Env.QueueAwsSqsUrl)
 		if err != nil {
 			return nil, fmt.Errorf("unable to initialize SQS: %w", err)
 		}
 		logger.Info("Using AWS SQS queue")
 		return q, nil
 	default:
-		return nil, fmt.Errorf("unsupported queue type: %s", config.Env.QueueType)
+		return nil, fmt.Errorf("unsupported queue type: %s", configs.Env.QueueType)
 	}
 }
 
 func initCache() cache.Client {
-	return redisCache.New(config.Env.CacheRedisEndpoint, config.Env.CacheRedisDB)
+	return redisCache.New(configs.Env.CacheRedisEndpoint, configs.Env.CacheRedisDB)
 }
 
 func initValidator() *validator.Validate {

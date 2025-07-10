@@ -1,7 +1,7 @@
 package worker
 
 import (
-	"aws-sqs-k8s-job-worker/config"
+	"aws-sqs-k8s-job-worker/configs"
 	"aws-sqs-k8s-job-worker/internal/cache"
 	"aws-sqs-k8s-job-worker/internal/job"
 	"aws-sqs-k8s-job-worker/internal/k8s"
@@ -26,7 +26,7 @@ type JobWorker struct {
 }
 
 func (w *JobWorker) StartLeaderElection(ctx context.Context) {
-	identity := config.Env.PodName
+	identity := configs.Env.PodName
 	lock := k8s.GetLeaseLock(identity)
 
 	electorConfig := leaderelection.LeaderElectionConfig{
@@ -63,9 +63,9 @@ func (w *JobWorker) StartLeaderElection(ctx context.Context) {
 }
 
 func (w *JobWorker) handleMessages(ctx context.Context) {
-	jobs := make(chan types.Message, config.Env.QueueWorkerPoolSize)
+	jobs := make(chan types.Message, configs.Env.QueueWorkerPoolSize)
 
-	for i := 0; i < int(config.Env.QueueWorkerPoolSize); i++ {
+	for i := 0; i < int(configs.Env.QueueWorkerPoolSize); i++ {
 		go func() {
 			defer w.recoverWorker("handleMessages")
 			for {
@@ -105,7 +105,7 @@ func (w *JobWorker) handleMessages(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Second * time.Duration(config.Env.PollingInterval)):
+			case <-time.After(time.Second * time.Duration(configs.Env.PollingInterval)):
 			}
 		}
 	}
@@ -114,15 +114,15 @@ func (w *JobWorker) handleMessages(ctx context.Context) {
 func (w *JobWorker) RecoverCachedJobs(ctx context.Context) {
 	logger.Info("Recovering cached jobs from Redis")
 
-	recoverList, err := w.Cache.ScanPrefix(ctx, config.Env.CacheJobKeyPrefix)
+	recoverList, err := w.Cache.ScanPrefix(ctx, configs.Env.CacheJobKeyPrefix)
 	if err != nil {
 		logger.Error("Failed to retrieve cached jobs: %s", err)
 		return
 	}
 
-	recoverJobs := make(chan string, config.Env.QueueWorkerPoolSize)
+	recoverJobs := make(chan string, configs.Env.QueueWorkerPoolSize)
 
-	for i := 0; i < int(config.Env.QueueWorkerPoolSize); i++ {
+	for i := 0; i < int(configs.Env.QueueWorkerPoolSize); i++ {
 		go func() {
 			defer w.recoverWorker("recover-jobs")
 			for {
@@ -174,7 +174,7 @@ func (w *JobWorker) processRedisRecord(ctx context.Context, data string) {
 }
 
 func (w *JobWorker) processRecord(ctx context.Context, record job.Record, fromSQS bool) {
-	key := config.Env.CacheJobKeyPrefix + record.JobMessage.ID
+	key := configs.Env.CacheJobKeyPrefix + record.JobMessage.ID
 	ctx = logger.WithTraceID(ctx, record.JobMessage.ID)
 
 	if fromSQS {

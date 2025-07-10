@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
-	"aws-sqs-k8s-job-worker/config"
+	"aws-sqs-k8s-job-worker/configs"
 	"aws-sqs-k8s-job-worker/internal/logger"
 )
 
@@ -33,13 +33,13 @@ func New(ctx context.Context, region string, queueUrl string) (*SqsActions, erro
 func (a *SqsActions) GetMessages(ctx context.Context) ([]types.Message, error) {
 	var messages []types.Message
 	maxNum := int32(10)
-	if config.Env.QueueWorkerPoolSize > 0 && config.Env.QueueWorkerPoolSize <= 10 {
-		maxNum = int32(config.Env.QueueWorkerPoolSize)
+	if configs.Env.QueueWorkerPoolSize > 0 && configs.Env.QueueWorkerPoolSize <= 10 {
+		maxNum = int32(configs.Env.QueueWorkerPoolSize)
 	}
 	result, err := a.SqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            a.QueueURL,
 		MaxNumberOfMessages: maxNum,
-		WaitTimeSeconds:     config.Env.QueueAwsSqsWaitTimeSeconds,
+		WaitTimeSeconds:     configs.Env.QueueAwsSqsWaitTimeSeconds,
 	})
 	if err != nil {
 		logger.Error("SQS ReceiveMessage error")

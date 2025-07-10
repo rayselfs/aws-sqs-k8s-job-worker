@@ -10,7 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
-	"aws-sqs-k8s-job-worker/config"
+	"aws-sqs-k8s-job-worker/configs"
 	"aws-sqs-k8s-job-worker/internal/cache"
 	"aws-sqs-k8s-job-worker/internal/callback"
 	"aws-sqs-k8s-job-worker/internal/k8s"
@@ -202,7 +202,7 @@ func cacheStore(ctx context.Context, client cache.Client, record *Record) {
 		logger.WarnCtx(ctx, "marshal error, skip caching job %s, status: %d: %v", record.JobMessage.ID, record.Status.String(), err)
 		return
 	}
-	if err := client.Set(ctx, config.Env.CacheJobKeyPrefix+record.JobMessage.ID, data, record.TTL()); err != nil {
+	if err := client.Set(ctx, configs.Env.CacheJobKeyPrefix+record.JobMessage.ID, data, record.TTL()); err != nil {
 		logger.WarnCtx(ctx, "cache set error for job %s, status: %d: %v", record.JobMessage.ID, record.Status.String(), err)
 	}
 }
