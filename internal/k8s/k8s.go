@@ -1,7 +1,6 @@
 package k8s
 
 import (
-	"aws-sqs-k8s-job-worker/config"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -9,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"aws-sqs-k8s-job-worker/configs"
 	"aws-sqs-k8s-job-worker/internal/logger"
 
 	batchV1 "k8s.io/api/batch/v1"
@@ -138,8 +138,8 @@ func GetLeaseLock(id string) *resourcelock.LeaseLock {
 	// Create the lock configuration
 	return &resourcelock.LeaseLock{
 		LeaseMeta: metaV1.ObjectMeta{
-			Namespace: config.Env.PodNamespace,
-			Name:      config.Env.LeaderElectionLockName,
+			Namespace: configs.Env.PodNamespace,
+			Name:      configs.Env.LeaderElectionLockName,
 		},
 		Client: Clientset.CoordinationV1(),
 		LockConfig: resourcelock.ResourceLockConfig{
@@ -387,7 +387,7 @@ func (jobMsg JobMessage) WatchPodRunning(ctx context.Context, jobName string) (*
 		fields.OneTermEqualSelector("metadata.name", pod.Name),
 	)
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, config.Env.PodStartTimeoutDuration)
+	timeoutCtx, cancel := context.WithTimeout(ctx, configs.Env.PodStartTimeoutDuration)
 	defer cancel()
 
 	errCh := make(chan error, 1)
@@ -467,7 +467,7 @@ func (jobMsg JobMessage) WatchJobCompletion(ctx context.Context, jobName string)
 			case cond.Type == batchV1.JobFailed && cond.Status == coreV1.ConditionTrue:
 				logger.ErrorCtx(timeoutCtx, "job failed: %s - %s", cond.Reason, cond.Message)
 				go func() {
-					deleteCtx, deleteCancel := context.WithTimeout(ctx, config.Env.KubernetesClientDuration)
+					deleteCtx, deleteCancel := context.WithTimeout(ctx, configs.Env.KubernetesClientDuration)
 					defer deleteCancel()
 
 					err := Clientset.BatchV1().Jobs(jobMsg.Job.Namespace).Delete(deleteCtx, jobName, metaV1.DeleteOptions{})

@@ -1,10 +1,9 @@
 package redisQueue
 
 import (
+	"aws-sqs-k8s-job-worker/configs"
 	"context"
 	"encoding/json"
-
-	"aws-sqs-k8s-job-worker/config"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/redis/go-redis/v9"
@@ -29,7 +28,7 @@ func New(addr, key string, db int) *RedisActions {
 func (q *RedisActions) GetMessages(ctx context.Context) ([]types.Message, error) {
 	var messages []types.Message
 
-	for i := 0; i < int(config.Env.QueueWorkerPoolSize); i++ {
+	for i := 0; i < int(configs.Env.QueueWorkerPoolSize); i++ {
 		res, err := q.Client.LPop(ctx, q.Key).Result()
 
 		if err == redis.Nil {

@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"aws-sqs-k8s-job-worker/config"
+	"aws-sqs-k8s-job-worker/configs"
 	"aws-sqs-k8s-job-worker/internal/k8s"
 	"aws-sqs-k8s-job-worker/internal/logger"
 )
@@ -67,10 +67,10 @@ func (body RequestBody) Post(ctx context.Context, url string) (*http.Response, e
 		return nil, err
 	}
 
-	maxRetries := config.Env.CallbackMaxRetries
-	baseDelay := config.Env.CallbackBaseDelayDuration
-	maxDelay := config.Env.CallbackMaxDelayDuration
-	totalTimeout := config.Env.CallbackTotalTimeoutDuration
+	maxRetries := configs.Env.CallbackMaxRetries
+	baseDelay := configs.Env.CallbackBaseDelayDuration
+	maxDelay := configs.Env.CallbackMaxDelayDuration
+	totalTimeout := configs.Env.CallbackTotalTimeoutDuration
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, totalTimeout)
 	defer cancel()
