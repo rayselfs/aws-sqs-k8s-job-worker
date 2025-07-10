@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"aws-sqs-k8s-job-worker/configs"
-	"aws-sqs-k8s-job-worker/internal/k8s"
-	"aws-sqs-k8s-job-worker/internal/logger"
+	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
+	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 )
 
 // RequestBody represents the body of a callback request.

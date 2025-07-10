@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"aws-sqs-k8s-job-worker/configs"
-	"aws-sqs-k8s-job-worker/internal/logger"
+	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 
 	batchV1 "k8s.io/api/batch/v1"
 	coreV1 "k8s.io/api/core/v1"

@@ -2,16 +2,16 @@ package main
 
 import (
 	"aws-sqs-k8s-job-worker/configs"
-	"aws-sqs-k8s-job-worker/internal/cache"
-	redisCache "aws-sqs-k8s-job-worker/internal/cache/redis"
-	"aws-sqs-k8s-job-worker/internal/k8s"
-	"aws-sqs-k8s-job-worker/internal/logger"
-	"aws-sqs-k8s-job-worker/internal/metrics"
-	"aws-sqs-k8s-job-worker/internal/queue"
-	redisQueue "aws-sqs-k8s-job-worker/internal/queue/redis"
-	"aws-sqs-k8s-job-worker/internal/queue/sqs"
-	"aws-sqs-k8s-job-worker/internal/server"
-	"aws-sqs-k8s-job-worker/internal/worker"
+	"aws-sqs-k8s-job-worker/internal/app/worker"
+	"aws-sqs-k8s-job-worker/internal/pkg/cache"
+	redisCache "aws-sqs-k8s-job-worker/internal/pkg/cache/redis"
+	"aws-sqs-k8s-job-worker/internal/pkg/http"
+	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
+	"aws-sqs-k8s-job-worker/internal/pkg/logger"
+	"aws-sqs-k8s-job-worker/internal/pkg/observability/metrics"
+	"aws-sqs-k8s-job-worker/internal/pkg/queue"
+	redisQueue "aws-sqs-k8s-job-worker/internal/pkg/queue/redis"
+	"aws-sqs-k8s-job-worker/internal/pkg/queue/sqs"
 	"context"
 	"fmt"
 	"os"
@@ -59,7 +59,7 @@ func main() {
 
 	metrics.Setup()
 
-	server.StartHTTPServer(ctx)
+	http.StartHTTPServer(ctx)
 
 	worker.StartLeaderElection(ctx)
 

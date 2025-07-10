@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"aws-sqs-k8s-job-worker/internal/k8s"
-	"aws-sqs-k8s-job-worker/internal/logger"
+	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
+	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 )
 
 type JobDetail struct {
