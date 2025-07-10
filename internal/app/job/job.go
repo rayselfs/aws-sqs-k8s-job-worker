@@ -11,12 +11,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	"aws-sqs-k8s-job-worker/configs"
-	"aws-sqs-k8s-job-worker/internal/cache"
-	"aws-sqs-k8s-job-worker/internal/callback"
-	"aws-sqs-k8s-job-worker/internal/k8s"
-	"aws-sqs-k8s-job-worker/internal/logger"
-	prom "aws-sqs-k8s-job-worker/internal/metrics"
-	"aws-sqs-k8s-job-worker/internal/utils"
+	"aws-sqs-k8s-job-worker/internal/app/callback"
+	"aws-sqs-k8s-job-worker/internal/app/utils"
+	"aws-sqs-k8s-job-worker/internal/pkg/cache"
+	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
+	"aws-sqs-k8s-job-worker/internal/pkg/logger"
+	prom "aws-sqs-k8s-job-worker/internal/pkg/observability/metrics"
 
 	batchV1 "k8s.io/api/batch/v1"
 	coreV1 "k8s.io/api/core/v1"

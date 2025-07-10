@@ -1,8 +1,8 @@
-package server
+package http
 
 import (
-	"aws-sqs-k8s-job-worker/internal/handler"
-	"aws-sqs-k8s-job-worker/internal/logger"
+	"aws-sqs-k8s-job-worker/internal/pkg/http/handler"
+	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 	"context"
 	"net/http"
 	"time"
