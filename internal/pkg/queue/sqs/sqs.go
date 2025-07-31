@@ -7,18 +7,23 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
-	"aws-sqs-k8s-job-worker/configs"
 	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 )
 
 // SqsActions provides methods to interact with AWS SQS.
 type SqsActions struct {
 	SqsClient *sqs.Client // AWS SQS client
-	QueueURL  *string     // SQS queue URL
+	Config    *Config     // Configuration for SQS
 }
 
-// New creates a new SqsActions instance.
-func New(ctx context.Context, region string, queueUrl string) (*SqsActions, error) {
+type Config struct {
+	WorkerPoolSize  int    // Number of workers to process messages
+	QueueUrl        string // SQS queue URL
+	WaitTimeSeconds int32  // Wait time for SQS messages
+}
+
+// NewClient creates a new sqs client
+func NewClient(ctx context.Context, region string, queueUrl string) (*sqs.Client, error) {
 	// Load the Shared AWS Configuration
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
@@ -26,20 +31,17 @@ func New(ctx context.Context, region string, queueUrl string) (*SqsActions, erro
 	}
 	// Create an SQS service client
 	svc := sqs.NewFromConfig(cfg)
-	return &SqsActions{SqsClient: svc, QueueURL: &queueUrl}, nil
+	return svc, nil
 }
 
 // GetMessages receives messages from the SQS queue.
 func (a *SqsActions) GetMessages(ctx context.Context) ([]types.Message, error) {
 	var messages []types.Message
-	maxNum := int32(10)
-	if configs.Env.QueueWorkerPoolSize > 0 && configs.Env.QueueWorkerPoolSize <= 10 {
-		maxNum = int32(configs.Env.QueueWorkerPoolSize)
-	}
+	maxNum := int32(a.Config.WorkerPoolSize)
 	result, err := a.SqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
-		QueueUrl:            a.QueueURL,
+		QueueUrl:            &a.Config.QueueUrl,
 		MaxNumberOfMessages: maxNum,
-		WaitTimeSeconds:     configs.Env.QueueAwsSqsWaitTimeSeconds,
+		WaitTimeSeconds:     a.Config.WaitTimeSeconds,
 	})
 	if err != nil {
 		logger.Error("SQS ReceiveMessage error")
@@ -52,7 +54,7 @@ func (a *SqsActions) GetMessages(ctx context.Context) ([]types.Message, error) {
 // DeleteMessage deletes a message from the SQS queue.
 func (a *SqsActions) DeleteMessage(ctx context.Context, msg types.Message) error {
 	_, err := a.SqsClient.DeleteMessage(ctx, &sqs.DeleteMessageInput{
-		QueueUrl:      a.QueueURL,
+		QueueUrl:      &a.Config.QueueUrl,
 		ReceiptHandle: msg.ReceiptHandle,
 	})
 	if err != nil {

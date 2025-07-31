@@ -16,21 +16,34 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/go-playground/validator/v10"
+	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
 )
 
 type JobWorker struct {
 	Queue     queue.QueueClient
+	K8sClient k8s.Client
 	Cache     cache.Client
 	Validator *validator.Validate
+	Config    *configs.Config
 }
 
 func (w *JobWorker) StartLeaderElection(ctx context.Context) {
-	identity := configs.Env.PodName
-	lock := k8s.GetLeaseLock(identity)
+	identity := w.Config.PodName
+	lock := resourcelock.LeaseLock{
+		LeaseMeta: metaV1.ObjectMeta{
+			Namespace: w.Config.PodNamespace,
+			Name:      w.Config.LeaderElectionLockName,
+		},
+		Client: w.K8sClient.Clientset.CoordinationV1(),
+		LockConfig: resourcelock.ResourceLockConfig{
+			Identity: identity,
+		},
+	}
 
 	electorConfig := leaderelection.LeaderElectionConfig{
-		Lock:            lock,
+		Lock:            &lock,
 		LeaseDuration:   15 * time.Second,
 		RenewDeadline:   10 * time.Second,
 		RetryPeriod:     2 * time.Second,
@@ -63,11 +76,13 @@ func (w *JobWorker) StartLeaderElection(ctx context.Context) {
 }
 
 func (w *JobWorker) handleMessages(ctx context.Context) {
-	jobs := make(chan types.Message, configs.Env.QueueWorkerPoolSize)
+	jobs := make(chan types.Message, w.Config.QueueWorkerPoolSize)
+	defer close(jobs)
 
-	for i := 0; i < int(configs.Env.QueueWorkerPoolSize); i++ {
+	// Start worker pool
+	for i := 0; i < int(w.Config.QueueWorkerPoolSize); i++ {
 		go func() {
-			defer w.recoverWorker("handleMessages")
+			defer w.recoverWorker("handleMessages-worker")
 			for {
 				select {
 				case <-ctx.Done():
@@ -80,6 +95,7 @@ func (w *JobWorker) handleMessages(ctx context.Context) {
 		}()
 	}
 
+	// Poll SQS messages
 	for {
 		select {
 		case <-ctx.Done():
@@ -97,15 +113,17 @@ func (w *JobWorker) handleMessages(ctx context.Context) {
 				select {
 				case jobs <- msg:
 				case <-ctx.Done():
+					logger.WarnCtx(ctx, "Context cancelled, %d messages may be lost", len(messages))
 					return
+				default:
+					logger.WarnCtx(ctx, "Job queue full, message may be lost")
 				}
 			}
 
-			// ✅ 改這裡：可以被 ctx.Cancel() 終止的 sleep
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Second * time.Duration(configs.Env.PollingInterval)):
+			case <-time.After(time.Second * time.Duration(w.Config.PollingInterval)):
 			}
 		}
 	}
@@ -114,15 +132,16 @@ func (w *JobWorker) handleMessages(ctx context.Context) {
 func (w *JobWorker) RecoverCachedJobs(ctx context.Context) {
 	logger.Info("Recovering cached jobs from Redis")
 
-	recoverList, err := w.Cache.ScanPrefix(ctx, configs.Env.CacheJobKeyPrefix)
+	recoverList, err := w.Cache.ScanPrefix(ctx, w.Config.CacheJobKeyPrefix)
 	if err != nil {
 		logger.Error("Failed to retrieve cached jobs: %s", err)
 		return
 	}
 
-	recoverJobs := make(chan string, configs.Env.QueueWorkerPoolSize)
+	recoverJobs := make(chan string, w.Config.QueueWorkerPoolSize)
 
-	for i := 0; i < int(configs.Env.QueueWorkerPoolSize); i++ {
+	// Start worker pool for recovered jobs
+	for i := 0; i < int(w.Config.QueueWorkerPoolSize); i++ {
 		go func() {
 			defer w.recoverWorker("recover-jobs")
 			for {
@@ -174,45 +193,53 @@ func (w *JobWorker) processRedisRecord(ctx context.Context, data string) {
 }
 
 func (w *JobWorker) processRecord(ctx context.Context, record job.Record, fromSQS bool) {
-	key := configs.Env.CacheJobKeyPrefix + record.JobMessage.ID
+	key := w.Config.CacheJobKeyPrefix + record.JobMessage.ID
 	ctx = logger.WithTraceID(ctx, record.JobMessage.ID)
 
 	if fromSQS {
+		// Validate the job message
 		if err := w.Validator.Struct(record.JobMessage); err != nil {
 			logger.ErrorCtx(ctx, "Validation failed: %s", err)
 			metrics.MessagesFailed.Inc()
-			w.Queue.DeleteMessage(ctx, record.SQSMessage)
+			w.Queue.DeleteMessage(ctx, record.SQSMessage) // Keep original position
 			return
 		}
 
+		// Check for duplicate jobs using Redis cache
 		if _, err := w.Cache.Get(ctx, key); err == nil {
 			logger.WarnCtx(ctx, "Duplicate job detected")
-			w.Queue.DeleteMessage(ctx, record.SQSMessage)
+			w.Queue.DeleteMessage(ctx, record.SQSMessage) // Keep original position
 			metrics.MessagesFailed.Inc()
 			return
 		}
 
+		// Cache the job for deduplication
 		data, _ := json.Marshal(record)
-		if err := w.Cache.Set(ctx, key, string(data), time.Second*time.Duration(record.JobMessage.Job.ActiveDeadlineSeconds)); err != nil {
+		if err := w.Cache.Set(ctx, key, string(data),
+			time.Second*time.Duration(record.JobMessage.Job.ActiveDeadlineSeconds)); err != nil {
 			logger.ErrorCtx(ctx, "Failed to cache job: %s", err)
 		}
 
-		if err := w.Queue.DeleteMessage(ctx, record.SQSMessage); err != nil {
+		// Delete SQS message immediately after caching
+		if err := w.Queue.DeleteMessage(ctx, record.SQSMessage); err != nil { // Keep original position
 			logger.ErrorCtx(ctx, "Failed to delete SQS message: %s", err)
 		}
 
-		// jobMsg := record.JobMessage
+		// Check and assign job name
 		jobName, err := record.JobMessage.CheckJobName()
 		if err != nil {
 			logger.ErrorCtx(ctx, "Invalid job name: %s", err)
+			_ = w.Cache.Delete(ctx, key) // Prevent dedup block for retry
 			return
 		}
 		record.JobName = jobName
 	}
 
 	logger.InfoCtx(ctx, "Processing job")
-	record.Execution(ctx, w.Cache)
+	record.Execution(ctx, w.K8sClient, w.Cache)
 	metrics.MessagesProcessed.Inc()
+
+	// Always delete the cache key after execution (success or fail)
 	if err := w.Cache.Delete(ctx, key); err != nil {
 		logger.ErrorCtx(ctx, "Failed to delete cache key: %s", err)
 	}
