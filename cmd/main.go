@@ -2,10 +2,10 @@ package main
 
 import (
 	"aws-sqs-k8s-job-worker/configs"
+	"aws-sqs-k8s-job-worker/internal/app/http"
 	"aws-sqs-k8s-job-worker/internal/app/worker"
 	"aws-sqs-k8s-job-worker/internal/pkg/cache"
 	redisCache "aws-sqs-k8s-job-worker/internal/pkg/cache/redis"
-	"aws-sqs-k8s-job-worker/internal/pkg/http"
 	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
 	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 	"aws-sqs-k8s-job-worker/internal/pkg/observability/metrics"
