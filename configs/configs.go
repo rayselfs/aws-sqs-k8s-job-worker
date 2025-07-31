@@ -2,65 +2,97 @@ package configs
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/caarlos0/env/v11"
 )
 
-// EnvVariable defines all environment variables and derived config for the worker.
+// Config defines all environment variables and derived config for the worker.
 type Config struct {
 	// Transformed time.Duration fields (not loaded from env directly)
 	QueueAwsSqsWaitTimeDuration time.Duration `env:"-"` // SQS wait time (duration)
 	PodStartTimeoutDuration     time.Duration `env:"-"` // Pod start timeout (duration)
 	KubernetesClientDuration    time.Duration `env:"-"` // Kubernetes client timeout (duration)
 
-	LeaderElectionLockName string `env:"LEADER_ELECTION_LOCK_NAME" envDefault:"aws-sqs-job-worker-lock"` // Name for leader election lock
-	PodName                string `env:"POD_NAME,required"`                                              // Current pod name
-	PodNamespace           string `env:"POD_NAMESPACE,required"`                                         // Current pod namespace
-	LeaderLockName         string `env:"LEADER_LOCK_NAME" envDefault:"job-worker"`                       // Lock name for leader election
-	PollingInterval        int32  `env:"POLLING_INTERVAL" envDefault:"5"`                                // Queue polling interval (seconds)
-	CacheRedisEndpoint     string `env:"CACHE_REDIS_ENDPOINT,required"`                                  // Redis endpoint for cache
-	CacheRedisDB           int    `env:"CACHE_REDIS_DB,required"`                                        // Redis DB index for cache
-	CacheJobKeyPrefix      string `env:"CACHE_JOB_KEY_PREFIX" envDefault:"job-worker-"`                  // Prefix for job keys in cache
+	LeaderElectionLockName string `env:"LEADER_ELECTION_LOCK_NAME" envDefault:"aws-sqs-job-worker-lock"`
+	PodName                string `env:"POD_NAME,required"`
+	PodNamespace           string `env:"POD_NAMESPACE,required"`
+	LeaderLockName         string `env:"LEADER_LOCK_NAME" envDefault:"job-worker"`
+	PollingInterval        int32  `env:"POLLING_INTERVAL" envDefault:"5"`
 
-	QueueType                  string `env:"QUEUE_TYPE" envDefault:"redis"`                   // Queue type: redis or sqs
-	QueueWorkerPoolSize        int    `env:"QUEUE_WORKER_POOL_SIZE" envDefault:"10"`          // Worker pool size
-	QueueAwsSqsRegion          string `env:"QUEUE_AWS_SQS_REGION"`                            // AWS SQS region
-	QueueAwsSqsUrl             string `env:"QUEUE_AWS_SQS_URL"`                               // AWS SQS queue URL
-	QueueAwsSqsWaitTimeSeconds int32  `env:"QUEUE_AWS_SQS_WAIT_TIME_SECONDS" envDefault:"20"` // SQS long polling wait time (seconds)
-	QueueRedisEndpoint         string `env:"REDIS_QUEUE_ENDPOINT"`                            // Redis endpoint for queue
-	QueueRedisKeyPrefix        string `env:"REDIS_QUEUE_KEY_PREFIX" envDefault:"queue-"`      // Prefix for queue keys in Redis
-	QueueRedisDB               int    `env:"REDIS_QUEUE_DB" envDefault:"0"`                   // Redis DB index for queue
+	CacheRedisEndpoint string `env:"CACHE_REDIS_ENDPOINT,required"`
+	CacheRedisDB       int    `env:"CACHE_REDIS_DB,required"`
+	CacheJobKeyPrefix  string `env:"CACHE_JOB_KEY_PREFIX" envDefault:"job-worker-"`
 
-	KubernetesClientTimeout int `env:"KUBERNETES_CLIENT_TIMEOUT" envDefault:"30"` // Kubernetes client timeout (seconds)
-	PodStartTimeout         int `env:"POD_START_TIMEOUT" envDefault:"600"`        // Pod start timeout (seconds)
+	QueueType                  string `env:"QUEUE_TYPE" envDefault:"redis"`
+	QueueWorkerPoolSize        int    `env:"QUEUE_WORKER_POOL_SIZE" envDefault:"10"`
+	QueueAwsSqsRegion          string `env:"QUEUE_AWS_SQS_REGION"`
+	QueueAwsSqsUrl             string `env:"QUEUE_AWS_SQS_URL"`
+	QueueAwsSqsWaitTimeSeconds int32  `env:"QUEUE_AWS_SQS_WAIT_TIME_SECONDS" envDefault:"20"`
+	QueueRedisEndpoint         string `env:"REDIS_QUEUE_ENDPOINT"`
+	QueueRedisKeyPrefix        string `env:"REDIS_QUEUE_KEY_PREFIX" envDefault:"queue-"`
+	QueueRedisDB               int    `env:"REDIS_QUEUE_DB" envDefault:"0"`
+
+	KubernetesClientTimeout int `env:"KUBERNETES_CLIENT_TIMEOUT" envDefault:"30"`
+	PodStartTimeout         int `env:"POD_START_TIMEOUT" envDefault:"600"`
 }
 
-// Parse parses environment variables and initializes the Variable config.
-// Returns an error if required variables are missing or invalid.
+// Parse loads configuration from environment variables, validates and normalizes it.
 func Parse() (*Config, error) {
 	var cfg Config
 
-	err := env.Parse(&cfg)
-	if err != nil {
+	// 1. 解析環境變數
+	if err := env.Parse(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse env: %w", err)
+	}
+
+	// 2. 驗證
+	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 
-	if cfg.PodStartTimeout <= 0 {
-		return nil, errors.New("PodRunningTimeout must be greater than 0")
-	}
-
-	if cfg.QueueType != "redis" && cfg.QueueType != "sqs" {
-		return nil, errors.New("QUEUE_TYPE must be 'redis' or 'sqs'")
-	}
-
-	if cfg.QueueWorkerPoolSize <= 0 || cfg.QueueWorkerPoolSize > 10 {
-		return nil, errors.New("QUEUE_WORKER_POOL_SIZE must be between 1 and 10")
-	}
-
-	cfg.QueueAwsSqsWaitTimeDuration = time.Duration(cfg.QueueAwsSqsWaitTimeSeconds) * time.Second
-	cfg.PodStartTimeoutDuration = time.Duration(cfg.PodStartTimeout) * time.Second
-	cfg.KubernetesClientDuration = time.Duration(cfg.KubernetesClientTimeout) * time.Second
+	// 3. 計算衍生欄位
+	cfg.normalize()
 
 	return &cfg, nil
+}
+
+// validate performs all required configuration checks.
+func (c *Config) validate() error {
+	if c.PodStartTimeout <= 0 {
+		return errors.New("POD_START_TIMEOUT must be greater than 0")
+	}
+
+	if c.QueueType != "redis" && c.QueueType != "sqs" {
+		return errors.New("QUEUE_TYPE must be 'redis' or 'sqs'")
+	}
+
+	if c.QueueWorkerPoolSize <= 0 || c.QueueWorkerPoolSize > 10 {
+		return errors.New("QUEUE_WORKER_POOL_SIZE must be between 1 and 10")
+	}
+
+	if c.QueueType == "sqs" {
+		if c.QueueAwsSqsRegion == "" {
+			return errors.New("QUEUE_AWS_SQS_REGION is required for SQS queue type")
+		}
+		if c.QueueAwsSqsUrl == "" {
+			return errors.New("QUEUE_AWS_SQS_URL is required for SQS queue type")
+		}
+	}
+
+	if c.QueueType == "redis" {
+		if c.QueueRedisEndpoint == "" {
+			return errors.New("REDIS_QUEUE_ENDPOINT is required for Redis queue type")
+		}
+	}
+
+	return nil
+}
+
+// normalize converts int values to duration and sets derived fields.
+func (c *Config) normalize() {
+	c.QueueAwsSqsWaitTimeDuration = time.Duration(c.QueueAwsSqsWaitTimeSeconds) * time.Second
+	c.PodStartTimeoutDuration = time.Duration(c.PodStartTimeout) * time.Second
+	c.KubernetesClientDuration = time.Duration(c.KubernetesClientTimeout) * time.Second
 }
