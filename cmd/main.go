@@ -38,23 +38,35 @@ func main() {
 		panic(fmt.Sprintf("logger setup failed: %s", err))
 	}
 
-	if err := configs.Setup(); err != nil {
+	cfg, err := configs.Parse()
+	if err != nil {
 		logger.Fatal("config setup failed: %s", err.Error())
 	}
 
-	if err := k8s.Setup(); err != nil {
-		logger.Fatal("k8s setup failed: %s", err.Error())
+	clientset, err := k8s.New()
+	if err != nil {
+		logger.ErrorCtx(ctx, "Failed to create Kubernetes client: %s", err)
+		return
+	}
+	k8sClient := k8s.Client{
+		Clientset: clientset,
+		Config: &k8s.Config{
+			PodStartTimeout: cfg.PodStartTimeoutDuration,
+			ClientTimeout:   cfg.KubernetesClientDuration,
+		},
 	}
 
-	queueClient, err := initQueue(ctx)
+	queueClient, err := initQueue(ctx, cfg)
 	if err != nil {
 		logger.Fatal("queue init failed: %s", err)
 	}
 
 	worker := &worker.JobWorker{
 		Queue:     queueClient,
-		Cache:     initCache(),
+		K8sClient: k8sClient,
+		Cache:     initCache(cfg),
 		Validator: initValidator(),
+		Config:    cfg,
 	}
 
 	metrics.Setup()
@@ -67,25 +79,42 @@ func main() {
 	logger.Info("Shutting down gracefully...")
 }
 
-func initQueue(ctx context.Context) (queue.QueueClient, error) {
-	switch configs.Env.QueueType {
+func initQueue(ctx context.Context, cfg *configs.Config) (queue.QueueClient, error) {
+	switch cfg.QueueType {
 	case "redis":
 		logger.Info("Using Redis queue")
-		return redisQueue.New(configs.Env.QueueRedisEndpoint, configs.Env.QueueRedisKeyPrefix, configs.Env.QueueRedisDB), nil
+		client := redisQueue.New(cfg.QueueRedisEndpoint, cfg.QueueRedisDB)
+		return &redisQueue.RedisActions{
+			Client: client,
+			Config: &redisQueue.Config{
+				WorkerPoolSize: cfg.QueueWorkerPoolSize,
+				Key:            cfg.QueueRedisKeyPrefix,
+			},
+		}, nil
 	case "sqs":
-		q, err := sqs.New(ctx, configs.Env.QueueAwsSqsRegion, configs.Env.QueueAwsSqsUrl)
+		logger.Info("Using AWS SQS queue")
+		client, err := sqs.NewClient(ctx, cfg.QueueAwsSqsRegion, cfg.QueueAwsSqsUrl)
 		if err != nil {
 			return nil, fmt.Errorf("unable to initialize SQS: %w", err)
 		}
-		logger.Info("Using AWS SQS queue")
-		return q, nil
+		return &sqs.SqsActions{
+			SqsClient: client,
+			Config: &sqs.Config{
+				WorkerPoolSize:  cfg.QueueWorkerPoolSize,
+				QueueUrl:        cfg.QueueAwsSqsUrl,
+				WaitTimeSeconds: cfg.QueueAwsSqsWaitTimeSeconds,
+			},
+		}, nil
 	default:
-		return nil, fmt.Errorf("unsupported queue type: %s", configs.Env.QueueType)
+		return nil, fmt.Errorf("unsupported queue type: %s", cfg.QueueType)
 	}
 }
 
-func initCache() cache.Client {
-	return redisCache.New(configs.Env.CacheRedisEndpoint, configs.Env.CacheRedisDB)
+func initCache(cfg *configs.Config) cache.Client {
+	client := redisCache.NewClient(cfg.CacheRedisEndpoint, cfg.CacheRedisDB)
+	return &redisCache.RedisRepository{Client: client, Config: &redisCache.Config{
+		CacheJobKeyPrefix: cfg.CacheJobKeyPrefix,
+	}}
 }
 
 func initValidator() *validator.Validate {

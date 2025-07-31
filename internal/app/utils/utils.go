@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
-	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
+	"aws-sqs-k8s-job-worker/internal/app/callback"
 	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 )
 
 type JobDetail struct {
-	Status   k8s.CallbackStatus
+	Status   callback.Status
 	Duration time.Duration
 }
 

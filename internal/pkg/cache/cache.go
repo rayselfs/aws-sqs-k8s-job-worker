@@ -7,6 +7,8 @@ import (
 
 // Client defines the interface for a generic cache backend.
 type Client interface {
+	// CacheJobKeyPrefix returns the prefix used for job keys in the cache.
+	CacheJobKeyPrefix() string
 	// Get retrieves the value for the given key.
 	Get(ctx context.Context, key string) (string, error)
 	// Set sets the value for the given key with expiration.

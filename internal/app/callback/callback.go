@@ -8,17 +8,18 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"aws-sqs-k8s-job-worker/configs"
-	"aws-sqs-k8s-job-worker/internal/pkg/k8s"
-	"aws-sqs-k8s-job-worker/internal/pkg/logger"
 )
+
+type CallbackClient struct {
+	URL         string       // Callback URL
+	RequestBody *RequestBody // Request body for the callback
+}
 
 // RequestBody represents the body of a callback request.
 type RequestBody struct {
-	ID     string             `json:"id"`
-	Status k8s.CallbackStatus `json:"status"`
-	Detail map[string]any     `json:"detail"`
+	ID     string         `json:"id"`
+	Status Status         `json:"status"`
+	Detail map[string]any `json:"detail"`
 }
 
 // ErrorDetail provides error code and message for callback responses.
@@ -26,6 +27,16 @@ type ErrorDetail struct {
 	ErrorCode string `json:"errorCode"`
 	Message   string `json:"message"`
 }
+
+type Status int
+
+const (
+	StatusJobCreated   Status = 0
+	StatusPodRunning   Status = 1
+	StatusJobCompleted Status = 2
+	StatusJobFailed    Status = 3
+	StatusException    Status = 99
+)
 
 var (
 	// ERROR_CODE_JOB_NAME_INVALID           = "A101"
@@ -39,38 +50,17 @@ var (
 	ERROR_CODE_JOB_GET                    = "A109"
 )
 
-func Send(ctx context.Context, jobMsg k8s.JobMessage, status k8s.CallbackStatus, detail map[string]any) {
-	if jobMsg.Webhook == nil {
-		return
-	}
-
-	requestBody := RequestBody{
-		ID:     jobMsg.ID,
-		Status: status,
-		Detail: detail,
-	}
-
-	resp, err := requestBody.Post(ctx, jobMsg.Webhook.URL)
-	if err != nil {
-		logger.ErrorCtx(ctx, "callback error for job %s: %s", jobMsg.ID, err.Error())
-		return
-	}
-
-	logger.InfoCtx(ctx, "callback sent, status: %d, jobID: %s", status, jobMsg.ID)
-	resp.Body.Close()
-}
-
 // Post sends the callback request to the specified URL with retry and timeout logic.
-func (body RequestBody) Post(ctx context.Context, url string) (*http.Response, error) {
-	jsonData, err := json.Marshal(body)
+func (c CallbackClient) Post(ctx context.Context) (*http.Response, error) {
+	jsonData, err := json.Marshal(c.RequestBody)
 	if err != nil {
 		return nil, err
 	}
 
-	maxRetries := configs.Env.CallbackMaxRetries
-	baseDelay := configs.Env.CallbackBaseDelayDuration
-	maxDelay := configs.Env.CallbackMaxDelayDuration
-	totalTimeout := configs.Env.CallbackTotalTimeoutDuration
+	maxRetries := 10
+	baseDelay := 1 * time.Second
+	maxDelay := 30 * time.Second
+	totalTimeout := 60 * time.Second // 60 seconds
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, totalTimeout)
 	defer cancel()
@@ -80,7 +70,7 @@ func (body RequestBody) Post(ctx context.Context, url string) (*http.Response, e
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		req, err := http.NewRequestWithContext(timeoutCtx, "POST", url, bytes.NewBuffer(jsonData))
+		req, err := http.NewRequestWithContext(timeoutCtx, "POST", c.URL, bytes.NewBuffer(jsonData))
 		if err != nil {
 			lastErr = err
 			break

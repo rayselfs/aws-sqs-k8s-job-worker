@@ -82,6 +82,7 @@ example/        # Example yaml/json
 - job.backoffLimit: specify the number of retries, recommended 0
 - job.activeDeadlineSeconds: maximum runtime for the Job in seconds (60 ~ 86400)
 - job.gpuEnable: whether to use GPU node
+- job.gpuNumber: deployment resources nvidia.com/gpu number, which represents how many GPUs are required
 - job.resources: cpu, memory setting (optional)
 - job.nodeSelector: node affinity selector (optional)
 - job.toleration: toleration for node taints (optional)
@@ -102,6 +103,7 @@ example/        # Example yaml/json
     "backoffLimit": 0,
     "activeDeadlineSeconds": 600,
     "gpuEnable": false,
+    "gpuNumber": 1,
     "resources": {
       "limits": {
         "cpu": "1",
