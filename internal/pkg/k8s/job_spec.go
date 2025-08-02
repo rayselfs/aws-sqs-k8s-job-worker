@@ -35,7 +35,7 @@ type Job struct {
 	NodeSelector            *NodeSelector `json:"nodeSelector"`                                                // Node selector
 	Toleration              *Toleration   `json:"toleration"`                                                  // Toleration
 	GpuEnable               bool          `json:"gpuEnable"`                                                   // Use GPU
-	GpuNumber               *int          `json:"gpuNumber" validate:"required,gte=1"`                         // Number of GPUs
+	GpuNumber               *int          `json:"gpuNumber" validate:"gte=1"`                                  // Number of GPUs
 }
 
 // Resources defines CPU and memory requests/limits.
