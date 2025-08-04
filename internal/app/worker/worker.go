@@ -11,6 +11,7 @@ import (
 	"aws-sqs-k8s-job-worker/internal/pkg/queue"
 	"context"
 	"encoding/json"
+	"fmt"
 	"runtime/debug"
 	"time"
 
@@ -198,8 +199,8 @@ func (w *JobWorker) processRecord(ctx context.Context, record job.Record, fromSQ
 
 	if fromSQS {
 		// Validate the job message
-		if err := w.Validator.Struct(record.JobMessage); err != nil {
-			logger.ErrorCtx(ctx, "Validation failed: %s", err)
+		if err := w.ValidateJobMessage(ctx, record.JobMessage); err != nil {
+			logger.ErrorCtx(ctx, "Validation failed: %s", err.Error())
 			metrics.MessagesFailed.Inc()
 			w.Queue.DeleteMessage(ctx, record.SQSMessage) // Keep original position
 			return
@@ -243,6 +244,20 @@ func (w *JobWorker) processRecord(ctx context.Context, record job.Record, fromSQ
 	if err := w.Cache.Delete(ctx, key); err != nil {
 		logger.ErrorCtx(ctx, "Failed to delete cache key: %s", err)
 	}
+}
+
+func (w *JobWorker) ValidateJobMessage(ctx context.Context, jobMsg k8s.JobMessage) error {
+	if err := w.Validator.Struct(jobMsg); err != nil {
+		logger.ErrorCtx(ctx, "Job message validation failed: %s", err)
+		return err
+	}
+
+	if jobMsg.Job.GpuNumber != nil && (*jobMsg.Job.GpuNumber <= 0 || *jobMsg.Job.GpuNumber > 4) {
+		logger.ErrorCtx(ctx, "Invalid gpuNumber: %d", *jobMsg.Job.GpuNumber)
+		return fmt.Errorf("gpuNumber must be between 1 and 4")
+	}
+
+	return nil
 }
 
 func (w *JobWorker) recoverWorker(source string) {
