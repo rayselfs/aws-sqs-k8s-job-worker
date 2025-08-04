@@ -71,7 +71,11 @@ func main() {
 
 	metrics.Setup()
 
-	http.StartHTTPServer(ctx)
+	httpConfig := &http.HttpConfig{
+		Port:    cfg.HTTPServerPort,
+		Timeout: cfg.HTTPServerTimeout,
+	}
+	go httpConfig.StartHTTPServer(ctx)
 
 	worker.StartLeaderElection(ctx)
 

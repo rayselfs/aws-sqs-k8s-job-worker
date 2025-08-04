@@ -14,6 +14,10 @@ type Config struct {
 	QueueAwsSqsWaitTimeDuration time.Duration `env:"-"` // SQS wait time (duration)
 	PodStartTimeoutDuration     time.Duration `env:"-"` // Pod start timeout (duration)
 	KubernetesClientDuration    time.Duration `env:"-"` // Kubernetes client timeout (duration)
+	HTTPServerTimeout           time.Duration `env:"-"` // HTTP server timeout (derived)
+
+	// HTTP Server Configuration
+	HTTPServerPort string `env:"HTTP_SERVER_PORT" envDefault:"8080"`
 
 	LeaderElectionLockName string `env:"LEADER_ELECTION_LOCK_NAME" envDefault:"aws-sqs-job-worker-lock"`
 	PodName                string `env:"POD_NAME,required"`
@@ -34,8 +38,9 @@ type Config struct {
 	QueueRedisKeyPrefix        string `env:"REDIS_QUEUE_KEY_PREFIX" envDefault:"queue-"`
 	QueueRedisDB               int    `env:"REDIS_QUEUE_DB" envDefault:"0"`
 
-	KubernetesClientTimeout int `env:"KUBERNETES_CLIENT_TIMEOUT" envDefault:"30"`
-	PodStartTimeout         int `env:"POD_START_TIMEOUT" envDefault:"600"`
+	KubernetesClientTimeout  int `env:"KUBERNETES_CLIENT_TIMEOUT" envDefault:"30"`
+	PodStartTimeout          int `env:"POD_START_TIMEOUT" envDefault:"600"`
+	HTTPServerTimeoutSeconds int `env:"HTTP_SERVER_TIMEOUT_SECONDS" envDefault:"30"`
 }
 
 // Parse loads configuration from environment variables, validates and normalizes it.
@@ -95,4 +100,5 @@ func (c *Config) normalize() {
 	c.QueueAwsSqsWaitTimeDuration = time.Duration(c.QueueAwsSqsWaitTimeSeconds) * time.Second
 	c.PodStartTimeoutDuration = time.Duration(c.PodStartTimeout) * time.Second
 	c.KubernetesClientDuration = time.Duration(c.KubernetesClientTimeout) * time.Second
+	c.HTTPServerTimeout = time.Duration(c.HTTPServerTimeoutSeconds) * time.Second
 }
