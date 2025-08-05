@@ -115,17 +115,19 @@ func (record *Record) handleJobInit(ctx context.Context, k8sClient k8s.Client) (
 }
 
 func (record *Record) handleJobCreated(ctx context.Context, k8sClient k8s.Client) (err error, errorCode string) {
-	logger.InfoCtx(ctx, "watching pod running")
+	logger.InfoCtx(ctx, "job %s created, watching for pod to start running", record.JobName)
 	pod, err := utils.Retry(ctx, 2, 3*time.Second, func() (*coreV1.Pod, error) {
 		return k8sClient.JobPodRunningWatch(ctx, record.JobMessage.Job.Namespace, record.JobName)
 	})
 	if err != nil {
+		logger.ErrorCtx(ctx, "failed to watch pod running for job %s: %v", record.JobName, err)
 		errorCode = callback.ERROR_CODE_JOB_POD_START_FAILED
 		if errors.Is(err, k8s.ErrPodStartTimeout) {
 			errorCode = callback.ERROR_CODE_JOB_POD_START_TIMEOUT
 		}
 		return
 	}
+	logger.InfoCtx(ctx, "pod %s is now running for job %s", pod.Name, record.JobName)
 	record.Send(ctx, callback.StatusPodRunning, map[string]any{
 		"podId":   pod.GetObjectMeta().GetUID(),
 		"podName": pod.GetObjectMeta().GetName(),
