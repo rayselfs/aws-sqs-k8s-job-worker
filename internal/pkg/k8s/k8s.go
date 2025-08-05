@@ -111,25 +111,34 @@ func (c *Client) JobCheck(ctx context.Context, namespace string, name string) er
 
 // JobPodsGet waits for the first pod belonging to a Job, with timeout.
 func (c *Client) JobPodsGet(ctx context.Context, namespace string, name string) (*coreV1.Pod, error) {
+	logger.InfoCtx(ctx, "waiting for pod creation for job %s in namespace %s", name, namespace)
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	for {
 		select {
 		case <-timeoutCtx.Done():
+			logger.ErrorCtx(ctx, "timed out waiting for pod for job %s", name)
 			return nil, fmt.Errorf("timed out waiting for pod: %w", timeoutCtx.Err())
 		default:
 			pods, err := c.Clientset.CoreV1().Pods(namespace).List(timeoutCtx, metaV1.ListOptions{
 				LabelSelector: fmt.Sprintf("job-name=%s", name),
 			})
 			if err != nil {
+				logger.ErrorCtx(ctx, "failed to list pods for job %s: %v", name, err)
 				return nil, fmt.Errorf("failed to list pods for job %s: %w", name, err)
 			}
 
+			logger.InfoCtx(ctx, "found %d pods for job %s", len(pods.Items), name)
+
 			if len(pods.Items) > 0 {
-				return &pods.Items[0], nil
+				pod := &pods.Items[0]
+				logger.InfoCtx(ctx, "using pod %s for job %s, phase: %s", pod.Name, name, pod.Status.Phase)
+				return pod, nil
 			}
 
+			logger.InfoCtx(ctx, "no pods found for job %s, retrying in 2 seconds", name)
 			time.Sleep(2 * time.Second)
 		}
 	}
@@ -137,14 +146,26 @@ func (c *Client) JobPodsGet(ctx context.Context, namespace string, name string) 
 
 // JobPodRunningWatch watches for the running phase of a specific pod.
 func (c *Client) JobPodRunningWatch(ctx context.Context, namespace string, name string) (*coreV1.Pod, error) {
+	logger.InfoCtx(ctx, "starting pod running watch for job %s in namespace %s", name, namespace)
+
 	err := c.JobCheck(ctx, namespace, name)
 	if err != nil {
+		logger.ErrorCtx(ctx, "job check failed: %v", err)
 		return nil, err
 	}
 
 	pod, err := c.JobPodsGet(ctx, namespace, name)
 	if err != nil {
+		logger.ErrorCtx(ctx, "failed to get pod for job %s: %v", name, err)
 		return nil, err
+	}
+
+	logger.InfoCtx(ctx, "found pod %s for job %s, current phase: %s", pod.Name, name, pod.Status.Phase)
+
+	// Check if pod is already running
+	if pod.Status.Phase == coreV1.PodRunning {
+		logger.InfoCtx(ctx, "pod %s is already running", pod.Name)
+		return pod, nil
 	}
 
 	lw := cache.NewListWatchFromClient(
@@ -157,16 +178,28 @@ func (c *Client) JobPodRunningWatch(ctx context.Context, namespace string, name 
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.Config.PodStartTimeout)
 	defer cancel()
 
+	logger.InfoCtx(ctx, "watching pod %s for running state, timeout: %v", pod.Name, c.Config.PodStartTimeout)
+
 	errCh := make(chan error, 1)
+	podCh := make(chan *coreV1.Pod, 1)
 
 	handle := func(p *coreV1.Pod) {
 		if timeoutCtx.Err() != nil {
 			return
 		}
+		logger.InfoCtx(timeoutCtx, "pod %s status update: phase=%s", p.Name, p.Status.Phase)
+
 		if p.Status.Phase == coreV1.PodRunning {
-			logger.InfoCtx(timeoutCtx, "pod running")
+			logger.InfoCtx(timeoutCtx, "pod %s is now running", p.Name)
 			select {
+			case podCh <- p:
 			case errCh <- nil:
+			default:
+			}
+		} else if p.Status.Phase == coreV1.PodFailed {
+			logger.ErrorCtx(timeoutCtx, "pod %s failed: %s", p.Name, p.Status.Reason)
+			select {
+			case errCh <- fmt.Errorf("pod failed: %s", p.Status.Reason):
 			default:
 			}
 		}
@@ -185,11 +218,18 @@ func (c *Client) JobPodRunningWatch(ctx context.Context, namespace string, name 
 	go controller.Run(timeoutCtx.Done())
 
 	select {
+	case runningPod := <-podCh:
+		logger.InfoCtx(ctx, "pod %s successfully reached running state", runningPod.Name)
+		cancel()
+		return runningPod, nil
 	case err = <-errCh:
 		cancel()
+		if err != nil {
+			return nil, err
+		}
 		return pod, nil
 	case <-timeoutCtx.Done():
-		logger.ErrorCtx(timeoutCtx, "pod start timeout")
+		logger.ErrorCtx(ctx, "pod start timeout for pod %s after %v", pod.Name, c.Config.PodStartTimeout)
 		return nil, ErrPodStartTimeout
 	}
 }
