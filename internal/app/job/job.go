@@ -186,8 +186,12 @@ func (record *Record) handleJobDone(ctx context.Context, k8sClient k8s.Client) {
 
 func (record *Record) Send(ctx context.Context, status callback.Status, detail map[string]any) {
 	if record.JobMessage.Webhook == nil {
+		logger.InfoCtx(ctx, "no webhook configured for job %s, skipping callback", record.JobMessage.ID)
 		return
 	}
+
+	logger.InfoCtx(ctx, "sending callback for job %s to URL: %s, status: %d",
+		record.JobMessage.ID, record.JobMessage.Webhook.URL, status)
 
 	callbackClient := callback.CallbackClient{
 		URL: record.JobMessage.Webhook.URL,
@@ -200,11 +204,13 @@ func (record *Record) Send(ctx context.Context, status callback.Status, detail m
 
 	resp, err := callbackClient.Post(ctx)
 	if err != nil {
-		logger.ErrorCtx(ctx, "callback error for job %s: %s", record.JobMessage.ID, err.Error())
+		logger.ErrorCtx(ctx, "callback failed for job %s to URL %s: %s",
+			record.JobMessage.ID, record.JobMessage.Webhook.URL, err.Error())
 		return
 	}
 
-	logger.InfoCtx(ctx, "callback sent, status: %d, jobID: %s", status, record.JobMessage.ID)
+	logger.InfoCtx(ctx, "callback sent successfully, status: %d, jobID: %s, response status: %d",
+		status, record.JobMessage.ID, resp.StatusCode)
 	resp.Body.Close()
 }
 
