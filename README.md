@@ -83,6 +83,7 @@ example/        # Example yaml/json
 - job.activeDeadlineSeconds: maximum runtime for the Job in seconds (60 ~ 86400)
 - job.gpuEnable: whether to use GPU node
 - job.gpuNumber: deployment resources nvidia.com/gpu number, which represents how many GPUs are required
+- job.env: deployment env (optional)
 - job.resources: cpu, memory setting (optional)
 - job.nodeSelector: node affinity selector (optional)
 - job.toleration: toleration for node taints (optional)
@@ -104,6 +105,12 @@ example/        # Example yaml/json
     "activeDeadlineSeconds": 600,
     "gpuEnable": false,
     "gpuNumber": 1,
+    "env": [
+      {
+        "name": "Test1",
+        "value": "Hello from a static variable!" 
+      }
+    ],
     "resources": {
       "limits": {
         "cpu": "1",
@@ -121,10 +128,6 @@ example/        # Example yaml/json
     "toleration": {
       "key": "key",
       "value": "value"
-    },
-    "fargate": {
-      "key": "WorkerType",
-      "value": "fargate"
     },
     "volume": {
       "mountPath": "workdir",
