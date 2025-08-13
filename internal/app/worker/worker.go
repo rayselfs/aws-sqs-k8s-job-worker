@@ -200,7 +200,7 @@ func (w *JobWorker) processRecord(ctx context.Context, record job.Record, fromSQ
 	if fromSQS {
 		// Validate the job message
 		if err := w.ValidateJobMessage(ctx, record.JobMessage); err != nil {
-			logger.ErrorCtx(ctx, "Validation failed: %s", err.Error())
+			logger.ErrorCtx(ctx, "Validation failed: %s", err)
 			metrics.MessagesFailed.Inc()
 			w.Queue.DeleteMessage(ctx, record.SQSMessage) // Keep original position
 			return
