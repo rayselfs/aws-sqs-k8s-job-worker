@@ -28,7 +28,8 @@ type Job struct {
 	ActiveDeadlineSeconds   int64         `json:"activeDeadlineSeconds" validate:"required,gte=120,lte=86400"` // Max job duration
 	BackoffLimit            int32         `json:"backoffLimit"`                                                // Retry limit
 	Image                   string        `json:"image" validate:"required"`                                   // Container image
-	Command                 []string      `json:"command" validate:"required"`                                 // Command to run
+	Command                 *[]string     `json:"command" validate:"required"`                                 // Entrypoint command
+	Args                    *[]string     `json:"args"`                                                        // Command arguments
 	Env                     *[]EnvVar     `json:"env"`                                                         // Environment variables
 	EnvFrom                 *[]EnvFrom    `json:"envFrom"`                                                     // Environment variables from ConfigMap/Secret
 	Resources               *Resources    `json:"resources"`                                                   // Resource requests/limits
@@ -58,8 +59,8 @@ type EnvVar struct {
 }
 
 type EnvFrom struct {
-	ConfigMapRef *coreV1.ConfigMapEnvSource `json:"configMapRef"`
-	SecretRef    *coreV1.SecretEnvSource    `json:"secretRef"`
+	ConfigMapRef *string `json:"configMapRef"`
+	SecretRef    *string `json:"secretRef"`
 }
 
 // Volume defines a PVC volume mount.
@@ -202,8 +203,15 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 	mainSpec := coreV1.Container{
 		Name:            jobMsg.Service,
 		Image:           jobMsg.Job.Image,
-		Command:         jobMsg.Job.Command,
 		ImagePullPolicy: coreV1.PullAlways,
+	}
+
+	if jobMsg.Job.Command != nil {
+		mainSpec.Command = *jobMsg.Job.Command
+	}
+
+	if jobMsg.Job.Args != nil {
+		mainSpec.Args = *jobMsg.Job.Args
 	}
 
 	if jobMsg.Job.Env != nil && len(*jobMsg.Job.Env) > 0 {
@@ -222,10 +230,18 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 		for i, v := range *jobMsg.Job.EnvFrom {
 			envFromSource := coreV1.EnvFromSource{}
 			if v.ConfigMapRef != nil {
-				envFromSource.ConfigMapRef = v.ConfigMapRef
+				envFromSource.ConfigMapRef = &coreV1.ConfigMapEnvSource{
+					LocalObjectReference: coreV1.LocalObjectReference{
+						Name: *v.ConfigMapRef,
+					},
+				}
 			}
 			if v.SecretRef != nil {
-				envFromSource.SecretRef = v.SecretRef
+				envFromSource.SecretRef = &coreV1.SecretEnvSource{
+					LocalObjectReference: coreV1.LocalObjectReference{
+						Name: *v.SecretRef,
+					},
+				}
 			}
 			envFrom[i] = envFromSource
 		}
