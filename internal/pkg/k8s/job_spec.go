@@ -22,21 +22,22 @@ type JobMessage struct {
 
 // Job defines the Kubernetes Job spec and related options.
 type Job struct {
-	PrefixName              string           `json:"prefixName" validate:"required"`                              // Job name prefix
-	Namespace               string           `json:"namespace" validate:"required"`                               // Namespace
-	TTLSecondsAfterFinished int32            `json:"ttlSecondsAfterFinished" validate:"required,gte=60,lte=120"`  // TTL after job finished
-	ActiveDeadlineSeconds   int64            `json:"activeDeadlineSeconds" validate:"required,gte=120,lte=86400"` // Max job duration
-	BackoffLimit            int32            `json:"backoffLimit"`                                                // Retry limit
-	Image                   string           `json:"image" validate:"required"`                                   // Container image
-	Command                 []string         `json:"command" validate:"required"`                                 // Command to run
-	Env                     *[]coreV1.EnvVar `json:"env"`                                                         // Environment variables
-	Resources               *Resources       `json:"resources"`                                                   // Resource requests/limits
-	ServiceAccount          *string          `json:"serviceAccount"`                                              // Service account
-	Volume                  *Volume          `json:"volume"`                                                      // Volume mount
-	NodeSelector            *NodeSelector    `json:"nodeSelector"`                                                // Node selector
-	Toleration              *Toleration      `json:"toleration"`                                                  // Toleration
-	GpuEnable               bool             `json:"gpuEnable"`                                                   // Use GPU
-	GpuNumber               *int             `json:"gpuNumber"`                                                   // Number of GPUs
+	PrefixName              string        `json:"prefixName" validate:"required"`                              // Job name prefix
+	Namespace               string        `json:"namespace" validate:"required"`                               // Namespace
+	TTLSecondsAfterFinished int32         `json:"ttlSecondsAfterFinished" validate:"required,gte=60,lte=120"`  // TTL after job finished
+	ActiveDeadlineSeconds   int64         `json:"activeDeadlineSeconds" validate:"required,gte=120,lte=86400"` // Max job duration
+	BackoffLimit            int32         `json:"backoffLimit"`                                                // Retry limit
+	Image                   string        `json:"image" validate:"required"`                                   // Container image
+	Command                 []string      `json:"command" validate:"required"`                                 // Command to run
+	Env                     *[]EnvVar     `json:"env"`                                                         // Environment variables
+	EnvFrom                 *[]EnvFrom    `json:"envFrom"`                                                     // Environment variables from ConfigMap/Secret
+	Resources               *Resources    `json:"resources"`                                                   // Resource requests/limits
+	ServiceAccount          *string       `json:"serviceAccount"`                                              // Service account
+	Volume                  *Volume       `json:"volume"`                                                      // Volume mount
+	NodeSelector            *NodeSelector `json:"nodeSelector"`                                                // Node selector
+	Toleration              *Toleration   `json:"toleration"`                                                  // Toleration
+	GpuEnable               bool          `json:"gpuEnable"`                                                   // Use GPU
+	GpuNumber               *int          `json:"gpuNumber"`                                                   // Number of GPUs
 }
 
 // Resources defines CPU and memory requests/limits.
@@ -49,6 +50,16 @@ type Resources struct {
 type Resource struct {
 	CPU    string `json:"cpu" validate:"required"`
 	Memory string `json:"memory" validate:"required"`
+}
+
+type EnvVar struct {
+	Name  string `json:"name" validate:"required"`
+	Value string `json:"value" validate:"required"`
+}
+
+type EnvFrom struct {
+	ConfigMapRef *coreV1.ConfigMapEnvSource `json:"configMapRef"`
+	SecretRef    *coreV1.SecretEnvSource    `json:"secretRef"`
 }
 
 // Volume defines a PVC volume mount.
@@ -195,8 +206,30 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 		ImagePullPolicy: coreV1.PullAlways,
 	}
 
-	if jobMsg.Job.Env != nil {
-		mainSpec.Env = *jobMsg.Job.Env
+	if jobMsg.Job.Env != nil && len(*jobMsg.Job.Env) > 0 {
+		env := make([]coreV1.EnvVar, len(*jobMsg.Job.Env))
+		for i, v := range *jobMsg.Job.Env {
+			env[i] = coreV1.EnvVar{
+				Name:  v.Name,
+				Value: v.Value,
+			}
+		}
+		mainSpec.Env = env
+	}
+
+	if jobMsg.Job.EnvFrom != nil && len(*jobMsg.Job.EnvFrom) > 0 {
+		envFrom := make([]coreV1.EnvFromSource, len(*jobMsg.Job.EnvFrom))
+		for i, v := range *jobMsg.Job.EnvFrom {
+			envFromSource := coreV1.EnvFromSource{}
+			if v.ConfigMapRef != nil {
+				envFromSource.ConfigMapRef = v.ConfigMapRef
+			}
+			if v.SecretRef != nil {
+				envFromSource.SecretRef = v.SecretRef
+			}
+			envFrom[i] = envFromSource
+		}
+		mainSpec.EnvFrom = envFrom
 	}
 
 	// 初始化資源限制
