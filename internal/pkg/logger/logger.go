@@ -3,9 +3,12 @@ package logger
 import (
 	"context"
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
+	"runtime"
 
+	"github.com/go-logr/stdr"
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/klog/v2"
 )
@@ -38,8 +41,8 @@ func (w slogWriter) Write(p []byte) (n int, err error) {
 func Setup() error {
 	logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	klog.ClearLogger()
-	klog.SetOutput(slogWriter{logger: logger})
+	log.SetOutput(slogWriter{logger: logger})
+	klog.SetLogger(stdr.New(log.Default()))
 	return nil
 }
 
@@ -83,6 +86,14 @@ func SpanIDFromContext(ctx context.Context) string {
 	return ""
 }
 
+// getCaller returns the file:line of the caller for tracing.
+func getCaller() string {
+	if _, file, line, ok := runtime.Caller(2); ok {
+		return fmt.Sprintf("%s:%d", file, line)
+	}
+	return ""
+}
+
 // InfoCtx logs an info message with trace and span IDs from context.
 func InfoCtx(ctx context.Context, msg string, attrs ...any) {
 	msg = fmt.Sprintf(msg, attrs...)
@@ -92,21 +103,23 @@ func InfoCtx(ctx context.Context, msg string, attrs ...any) {
 	)
 }
 
-// WarnCtx logs a warning message with trace and span IDs from context.
+// WarnCtx logs a warning message with trace and span IDs from context, and code trace.
 func WarnCtx(ctx context.Context, msg string, attrs ...any) {
 	msg = fmt.Sprintf(msg, attrs...)
 	logger.Warn(msg,
 		slog.String(TraceIDKey, TraceIDFromContext(ctx)),
 		slog.String(SpanIDKey, SpanIDFromContext(ctx)),
+		slog.String("caller", getCaller()),
 	)
 }
 
-// ErrorCtx logs an error message with trace and span IDs from context.
+// ErrorCtx logs an error message with trace and span IDs from context, and code trace.
 func ErrorCtx(ctx context.Context, msg string, attrs ...any) {
 	msg = fmt.Sprintf(msg, attrs...)
 	logger.Error(msg,
 		slog.String(TraceIDKey, TraceIDFromContext(ctx)),
 		slog.String(SpanIDKey, SpanIDFromContext(ctx)),
+		slog.String("caller", getCaller()),
 	)
 }
 
@@ -115,18 +128,18 @@ func Info(msg string, attrs ...any) {
 	logger.Info(fmt.Sprintf(msg, attrs...))
 }
 
-// Warn logs a warning message (without context).
+// Warn logs a warning message (without context), with code trace.
 func Warn(msg string, attrs ...any) {
-	logger.Warn(fmt.Sprintf(msg, attrs...))
+	logger.Warn(fmt.Sprintf(msg, attrs...), slog.String("caller", getCaller()))
 }
 
-// Error logs an error message (without context).
+// Error logs an error message (without context), with code trace.
 func Error(msg string, attrs ...any) {
-	logger.Error(fmt.Sprintf(msg, attrs...))
+	logger.Error(fmt.Sprintf(msg, attrs...), slog.String("caller", getCaller()))
 }
 
-// Fatal logs an error message and exits the process.
+// Fatal logs an error message and exits the process, with code trace.
 func Fatal(msg string, attrs ...any) {
-	logger.Error(fmt.Sprintf(msg, attrs...))
+	logger.Error(fmt.Sprintf(msg, attrs...), slog.String("caller", getCaller()))
 	os.Exit(1)
 }
