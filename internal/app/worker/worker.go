@@ -168,6 +168,9 @@ func (w *JobWorker) RecoverCachedJobs(ctx context.Context) {
 }
 
 func (w *JobWorker) processSQSRecord(ctx context.Context, message types.Message) {
+	// Log the SQS message body
+	logger.InfoCtx(ctx, "Received SQS message body: %s", *message.Body)
+
 	var jobMsg k8s.JobMessage
 	if err := json.Unmarshal([]byte(*message.Body), &jobMsg); err != nil {
 		logger.Error("Invalid job message: %s", err)
