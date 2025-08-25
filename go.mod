@@ -6,6 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.17
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.38.8
 	github.com/caarlos0/env/v11 v11.3.1
+	github.com/go-logr/stdr v1.2.2
 	github.com/prometheus/client_golang v1.23.0
 	github.com/redis/go-redis/v9 v9.11.0
 	go.opentelemetry.io/otel/trace v1.37.0
