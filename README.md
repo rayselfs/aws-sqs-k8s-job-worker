@@ -77,13 +77,16 @@ example/        # Example yaml/json
 - job.prefixName: job prefix name
 - job.namespace: job namespace
 - job.image: job image
-- job.command: container command with args (use args only for parameters)
+- job.command: container command (optional)
+- job.args: container args (optional)
+- job.serviceAccount: service account name (need create first, or use client sa, optional)
 - job.ttlSecondsAfterFinished: seconds, automatic cleanup for finished jobs (must be > 30s)
 - job.backoffLimit: specify the number of retries, recommended 0
 - job.activeDeadlineSeconds: maximum runtime for the Job in seconds (60 ~ 86400)
-- job.gpuEnable: whether to use GPU node
-- job.gpuNumber: deployment resources nvidia.com/gpu number, which represents how many GPUs are required
+- job.gpuEnable: whether to use GPU node (optional)
+- job.gpuNumber: deployment resources nvidia.com/gpu number, which represents how many GPUs are required (optional)
 - job.env: deployment env (optional)
+- job.envFrom: deployment envFrom (optional)
 - job.resources: cpu, memory setting (optional)
 - job.nodeSelector: node affinity selector (optional)
 - job.toleration: toleration for node taints (optional)
@@ -99,6 +102,7 @@ example/        # Example yaml/json
     "namespace": "default",
     "image": "busybox",
     "command": ["/bin/sh", "-c", "echo Hello World && sleep 30 && exit 0"],
+    "args": [],
     "serviceAccount": "default",
     "ttlSecondsAfterFinished": 60,
     "backoffLimit": 0,
@@ -110,6 +114,11 @@ example/        # Example yaml/json
         "name": "Test1",
         "value": "Hello from a static variable!" 
       }
+    ],
+    "envFrom": [
+        {
+            "configMapRef": "configmap-name"
+        }
     ],
     "resources": {
       "limits": {
