@@ -26,9 +26,9 @@ type Job struct {
 	Namespace               string        `json:"namespace" validate:"required"`                               // Namespace
 	TTLSecondsAfterFinished int32         `json:"ttlSecondsAfterFinished" validate:"required,gte=60,lte=120"`  // TTL after job finished
 	ActiveDeadlineSeconds   int64         `json:"activeDeadlineSeconds" validate:"required,gte=120,lte=86400"` // Max job duration
-	BackoffLimit            int32         `json:"backoffLimit"`                                                // Retry limit
+	BackoffLimit            *int32        `json:"backoffLimit"`                                                // Retry limit
 	Image                   string        `json:"image" validate:"required"`                                   // Container image
-	Command                 *[]string     `json:"command" validate:"required"`                                 // Entrypoint command
+	Command                 *[]string     `json:"command"`                                                     // Entrypoint command
 	Args                    *[]string     `json:"args"`                                                        // Command arguments
 	Env                     *[]EnvVar     `json:"env"`                                                         // Environment variables
 	EnvRef                  *[]EnvRef     `json:"envRef"`                                                      // Environment variables from ConfigMap/Secret
@@ -37,20 +37,20 @@ type Job struct {
 	Volume                  *Volume       `json:"volume"`                                                      // Volume mount
 	NodeSelector            *NodeSelector `json:"nodeSelector"`                                                // Node selector
 	Toleration              *Toleration   `json:"toleration"`                                                  // Toleration
-	GpuEnable               bool          `json:"gpuEnable"`                                                   // Use GPU
+	GpuEnable               *bool         `json:"gpuEnable"`                                                   // Use GPU
 	GpuNumber               *int          `json:"gpuNumber"`                                                   // Number of GPUs
 }
 
 // Resources defines CPU and memory requests/limits.
 type Resources struct {
-	Limits   Resource `json:"limits" validate:"required"`
-	Requests Resource `json:"requests" validate:"required"`
+	Limits   *Resource `json:"limits"`
+	Requests *Resource `json:"requests"`
 }
 
 // Resource defines a single resource request/limit.
 type Resource struct {
-	CPU    string `json:"cpu" validate:"required"`
-	Memory string `json:"memory" validate:"required"`
+	CPU    *string `json:"cpu"`
+	Memory *string `json:"memory"`
 }
 
 type EnvVar struct {
@@ -120,7 +120,7 @@ func (jobMsg JobMessage) GetJobSpec(jobName string) *batchV1.Job {
 				},
 				Spec: jobMsg.getPodSpec(),
 			},
-			BackoffLimit: &jobMsg.Job.BackoffLimit,
+			BackoffLimit: jobMsg.Job.BackoffLimit,
 		},
 	}
 }
@@ -132,7 +132,7 @@ func (jobMsg JobMessage) getLabels() map[string]string {
 		"jobId":                  jobMsg.ID,
 	}
 
-	if jobMsg.Job.GpuEnable {
+	if jobMsg.Job.GpuEnable != nil && *jobMsg.Job.GpuEnable {
 		labels["gpuType"] = "1"
 	}
 
@@ -181,7 +181,7 @@ func (jobMsg JobMessage) getPodSpec() coreV1.PodSpec {
 		podSpec.Tolerations = []coreV1.Toleration{toleration}
 	}
 
-	if jobMsg.Job.GpuEnable {
+	if jobMsg.Job.GpuEnable != nil && *jobMsg.Job.GpuEnable {
 		podSpec.Affinity = &coreV1.Affinity{
 			PodAntiAffinity: &coreV1.PodAntiAffinity{
 				RequiredDuringSchedulingIgnoredDuringExecution: []coreV1.PodAffinityTerm{
@@ -265,22 +265,26 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 
 	// 加入 CPU / Memory
 	if jobMsg.Job.Resources != nil {
-		if jobMsg.Job.Resources.Limits.CPU != "" {
-			resources.Limits["cpu"] = resource.MustParse(jobMsg.Job.Resources.Limits.CPU)
+		if jobMsg.Job.Resources.Limits != nil {
+			if jobMsg.Job.Resources.Limits.CPU != nil {
+				resources.Limits["cpu"] = resource.MustParse(*jobMsg.Job.Resources.Limits.CPU)
+			}
+			if jobMsg.Job.Resources.Limits.Memory != nil {
+				resources.Limits["memory"] = resource.MustParse(*jobMsg.Job.Resources.Limits.Memory)
+			}
 		}
-		if jobMsg.Job.Resources.Limits.Memory != "" {
-			resources.Limits["memory"] = resource.MustParse(jobMsg.Job.Resources.Limits.Memory)
-		}
-		if jobMsg.Job.Resources.Requests.CPU != "" {
-			resources.Requests["cpu"] = resource.MustParse(jobMsg.Job.Resources.Requests.CPU)
-		}
-		if jobMsg.Job.Resources.Requests.Memory != "" {
-			resources.Requests["memory"] = resource.MustParse(jobMsg.Job.Resources.Requests.Memory)
+		if jobMsg.Job.Resources.Requests != nil {
+			if jobMsg.Job.Resources.Requests.CPU != nil {
+				resources.Requests["cpu"] = resource.MustParse(*jobMsg.Job.Resources.Requests.CPU)
+			}
+			if jobMsg.Job.Resources.Requests.Memory != nil {
+				resources.Requests["memory"] = resource.MustParse(*jobMsg.Job.Resources.Requests.Memory)
+			}
 		}
 	}
 
 	// 加入 GPU
-	if jobMsg.Job.GpuEnable {
+	if jobMsg.Job.GpuEnable != nil && *jobMsg.Job.GpuEnable {
 		gpuNumber := 1
 		if n := jobMsg.Job.GpuNumber; n != nil {
 			gpuNumber = *n
