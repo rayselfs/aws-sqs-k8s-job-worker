@@ -86,7 +86,7 @@ example/        # Example yaml/json
 - job.gpuEnable: whether to use GPU node (optional)
 - job.gpuNumber: deployment resources nvidia.com/gpu number, which represents how many GPUs are required (optional)
 - job.env: deployment env (optional)
-- job.envFrom: deployment envFrom (optional)
+- job.envFrom: deployment envFrom, type list: configmap, secret (optional)
 - job.resources: cpu, memory setting (optional)
 - job.nodeSelector: node affinity selector (optional)
 - job.toleration: toleration for node taints (optional)
