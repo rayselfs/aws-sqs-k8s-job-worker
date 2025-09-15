@@ -259,16 +259,6 @@ func (w *JobWorker) ValidateJobMessage(ctx context.Context, jobMsg k8s.JobMessag
 		logger.ErrorCtx(ctx, "Invalid gpuNumber: %d", *jobMsg.Job.GpuNumber)
 		return fmt.Errorf("gpuNumber must be between 1 and 4")
 	}
-
-	if jobMsg.Job.EnvFrom != nil {
-		for i, v := range *jobMsg.Job.EnvFrom {
-			if v.ConfigMapRef != nil && v.SecretRef != nil {
-				logger.ErrorCtx(ctx, "EnvFrom[%d] cannot have both ConfigMapRef and SecretRef", i)
-				return fmt.Errorf("EnvFrom[%d] cannot have both ConfigMapRef and SecretRef", i)
-			}
-		}
-	}
-
 	return nil
 }
 

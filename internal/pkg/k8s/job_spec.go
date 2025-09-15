@@ -31,7 +31,7 @@ type Job struct {
 	Command                 *[]string     `json:"command" validate:"required"`                                 // Entrypoint command
 	Args                    *[]string     `json:"args"`                                                        // Command arguments
 	Env                     *[]EnvVar     `json:"env"`                                                         // Environment variables
-	EnvFrom                 *[]EnvFrom    `json:"envFrom"`                                                     // Environment variables from ConfigMap/Secret
+	EnvRef                  *[]EnvRef     `json:"envRef"`                                                      // Environment variables from ConfigMap/Secret
 	Resources               *Resources    `json:"resources"`                                                   // Resource requests/limits
 	ServiceAccount          *string       `json:"serviceAccount"`                                              // Service account
 	Volume                  *Volume       `json:"volume"`                                                      // Volume mount
@@ -58,10 +58,17 @@ type EnvVar struct {
 	Value string `json:"value" validate:"required"`
 }
 
-type EnvFrom struct {
-	ConfigMapRef *string `json:"configMapRef"`
-	SecretRef    *string `json:"secretRef"`
+type EnvRef struct {
+	Name string     `json:"name" validate:"required"`
+	Type EnvRefType `json:"type" validate:"required"`
 }
+
+type EnvRefType string
+
+const (
+	EnvRefTypeConfigMap EnvRefType = "configMap"
+	EnvRefTypeSecret    EnvRefType = "secret"
+)
 
 // Volume defines a PVC volume mount.
 type Volume struct {
@@ -225,25 +232,27 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 		mainSpec.Env = env
 	}
 
-	if jobMsg.Job.EnvFrom != nil && len(*jobMsg.Job.EnvFrom) > 0 {
-		envFrom := make([]coreV1.EnvFromSource, len(*jobMsg.Job.EnvFrom))
-		for i, v := range *jobMsg.Job.EnvFrom {
-			envFromSource := coreV1.EnvFromSource{}
-			if v.ConfigMapRef != nil {
-				envFromSource.ConfigMapRef = &coreV1.ConfigMapEnvSource{
+	if jobMsg.Job.EnvRef != nil && len(*jobMsg.Job.EnvRef) > 0 {
+		envFrom := []coreV1.EnvFromSource{}
+		for _, item := range *jobMsg.Job.EnvRef {
+			source := coreV1.EnvFromSource{}
+			if item.Type == EnvRefTypeConfigMap {
+				configMapEnvSource := &coreV1.ConfigMapEnvSource{
 					LocalObjectReference: coreV1.LocalObjectReference{
-						Name: *v.ConfigMapRef,
+						Name: item.Name,
 					},
 				}
+				source.ConfigMapRef = configMapEnvSource
 			}
-			if v.SecretRef != nil {
-				envFromSource.SecretRef = &coreV1.SecretEnvSource{
+			if item.Type == EnvRefTypeSecret {
+				secretEnvSource := &coreV1.SecretEnvSource{
 					LocalObjectReference: coreV1.LocalObjectReference{
-						Name: *v.SecretRef,
+						Name: item.Name,
 					},
 				}
+				source.SecretRef = secretEnvSource
 			}
-			envFrom[i] = envFromSource
+			envFrom = append(envFrom, source)
 		}
 		mainSpec.EnvFrom = envFrom
 	}
