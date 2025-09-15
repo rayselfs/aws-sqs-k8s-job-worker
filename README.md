@@ -115,9 +115,10 @@ example/        # Example yaml/json
         "value": "Hello from a static variable!" 
       }
     ],
-    "envFrom": [
+    "envRef": [
         {
-            "configMapRef": "configmap-name"
+          "name": "busybox-default",
+          "type": "configmap"
         }
     ],
     "resources": {
