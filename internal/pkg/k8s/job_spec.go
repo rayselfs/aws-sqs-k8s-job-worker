@@ -210,7 +210,7 @@ func (jobMsg JobMessage) getContainersSpec() []coreV1.Container {
 	mainSpec := coreV1.Container{
 		Name:            jobMsg.Service,
 		Image:           jobMsg.Job.Image,
-		ImagePullPolicy: coreV1.PullAlways,
+		ImagePullPolicy: coreV1.PullIfNotPresent,
 	}
 
 	if jobMsg.Job.Command != nil {
