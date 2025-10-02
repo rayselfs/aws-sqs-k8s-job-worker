@@ -3,6 +3,7 @@ package k8s
 import (
 	"fmt"
 	"strconv"
+	"time"
 
 	batchV1 "k8s.io/api/batch/v1"
 	coreV1 "k8s.io/api/core/v1"
@@ -95,7 +96,9 @@ type Webhook struct {
 
 // CheckJobName generates a job name based on the job ID and checks if it is valid.
 func (jobMsg JobMessage) CheckJobName() (string, error) {
-	hash := hashStringSHA256(jobMsg.ID)
+	timestamp := time.Now().Unix()
+	hashInput := fmt.Sprintf("%s-%d", jobMsg.ID, timestamp)
+	hash := hashStringSHA256(hashInput)
 	jobName := fmt.Sprintf("%s-%s", jobMsg.Job.PrefixName, hash)
 	if len(jobName) >= 63 {
 		return "", fmt.Errorf("job name too long: %v", jobName)
