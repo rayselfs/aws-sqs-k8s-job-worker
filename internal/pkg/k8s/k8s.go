@@ -188,18 +188,46 @@ func (c *Client) JobPodRunningWatch(ctx context.Context, namespace string, name 
 			return
 		}
 		logger.InfoCtx(timeoutCtx, "pod %s status update: phase=%s", p.Name, p.Status.Phase)
-
-		if p.Status.Phase == coreV1.PodRunning {
+		switch p.Status.Phase {
+		case coreV1.PodRunning:
 			logger.InfoCtx(timeoutCtx, "pod %s is now running", p.Name)
 			select {
 			case podCh <- p:
 			case errCh <- nil:
 			default:
 			}
-		} else if p.Status.Phase == coreV1.PodFailed {
-			logger.ErrorCtx(timeoutCtx, "pod %s failed: %s", p.Name, p.Status.Reason)
+		case coreV1.PodFailed:
+			// 嘗試從多個來源獲取錯誤資訊
+			reason := p.Status.Reason
+			message := p.Status.Message
+
+			// 如果 Reason 為空，嘗試從 ContainerStatuses 獲取錯誤資訊
+			if reason == "" && len(p.Status.ContainerStatuses) > 0 {
+				for _, containerStatus := range p.Status.ContainerStatuses {
+					if containerStatus.State.Terminated != nil {
+						if containerStatus.State.Terminated.Reason != "" {
+							reason = containerStatus.State.Terminated.Reason
+						}
+						if containerStatus.State.Terminated.Message != "" {
+							message = containerStatus.State.Terminated.Message
+						}
+						break
+					}
+				}
+			}
+
+			// 組合錯誤訊息
+			errorMsg := "pod failed"
+			if reason != "" {
+				errorMsg += fmt.Sprintf(" (reason: %s)", reason)
+			}
+			if message != "" {
+				errorMsg += fmt.Sprintf(" (message: %s)", message)
+			}
+
+			logger.ErrorCtx(timeoutCtx, "pod %s failed: %s", p.Name, errorMsg)
 			select {
-			case errCh <- fmt.Errorf("pod failed: %s", p.Status.Reason):
+			case errCh <- fmt.Errorf("%s", errorMsg):
 			default:
 			}
 		}
@@ -272,7 +300,16 @@ func (c *Client) JobCompletionWatch(ctx context.Context, namespace string, name 
 				})
 
 			case cond.Type == batchV1.JobFailed && cond.Status == coreV1.ConditionTrue:
-				logger.ErrorCtx(timeoutCtx, "job failed: %s - %s", cond.Reason, cond.Message)
+				// 組合詳細的錯誤訊息
+				errorMsg := "job failed"
+				if cond.Reason != "" {
+					errorMsg += fmt.Sprintf(" (reason: %s)", cond.Reason)
+				}
+				if cond.Message != "" {
+					errorMsg += fmt.Sprintf(" (message: %s)", cond.Message)
+				}
+
+				logger.ErrorCtx(timeoutCtx, "job failed: %s", errorMsg)
 				go func() {
 					deleteCtx, deleteCancel := context.WithTimeout(ctx, c.Config.ClientTimeout)
 					defer deleteCancel()
