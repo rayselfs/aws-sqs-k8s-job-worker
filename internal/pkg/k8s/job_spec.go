@@ -120,6 +120,9 @@ func (jobMsg JobMessage) GetJobSpec(jobName string) *batchV1.Job {
 			Template: coreV1.PodTemplateSpec{
 				ObjectMeta: metaV1.ObjectMeta{
 					Labels: jobMsg.getLabels(),
+					Annotations: map[string]string{
+						"sidecar.istio.io/inject": "false",
+					},
 				},
 				Spec: jobMsg.getPodSpec(),
 			},
