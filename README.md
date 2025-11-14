@@ -1,107 +1,144 @@
-# AWS SQS K8s Job Worker
+# Kubernetes Queue Job Worker
 
-## Architecture Diagram
+A worker node that consumes tasks from message queues and creates/manages Jobs in Kubernetes clusters. Supports multiple queue backends, leader election, health checks, Prometheus monitoring, and webhook callbacks.
 
-```
-+--------+        +-------------+        +-----------+        +-------------------+
-| Client +------->+ SQS/Redis   +------->+ Job Worker+------->+  Kubernetes Job   |
-+--------+        +-------------+        +-----------+        +-------------------+
-     ^                                                               |
-     |                                                               |
-     +------------------------------ callback webhook <--------------+
-```
+## 📋 Table of Contents
 
-## Main Workflow
+- [Architecture Overview](#architecture-overview)
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Message Format](#message-format)
+- [Callback API](#callback-api)
+- [Project Structure](#project-structure)
+- [Deployment Guide](#deployment-guide)
+- [Monitoring & Observability](#monitoring--observability)
 
-1. The client sends a job request to SQS or Redis queue.
-2. The job worker pulls messages from the queue.
-3. The job worker validates and parses the message, then creates the corresponding Kubernetes Job.
-4. The job worker monitors the Job status and **reports the result or error** back to the client via webhook callback.
-5. All important events and errors are logged.
-
----
-
-## Project Description
-
-This project is a worker that integrates AWS SQS/Redis queue with Kubernetes Job, supporting leader election, health checks, Prometheus monitoring, and webhook callbacks.
-
-- Supports Redis and AWS SQS as queue backends
-- Executes tasks as Kubernetes Jobs, supporting resource, node, toleration, volume, and other parameters
-- Supports webhook callback for job status reporting
-- Provides health checks and Prometheus metrics
-- Uses leader election to ensure only one worker processes the queue at a time
-
-## Directory Structure
+## 🏗️ Architecture Overview
 
 ```
-cmd/            # Entry point main.go
-config/         # Environment variable configuration
-internal/       # Main logic and components
-  app/service/  # Business logic
-  pkg/          # Shared components (k8s, queue, rdb, logger, prometheus, request)
-build/          # Dockerfile and build-related files
-example/        # Example yaml/json
+┌─────────┐        ┌─────────────┐        ┌──────────────┐        ┌──────────────────┐
+│ Client  │───────>│   Queue     │───────>│ Job Worker   │───────>│ Kubernetes Job   │
+└─────────┘        └─────────────┘        └──────────────┘        └──────────────────┘
+     ▲                                                                        │
+     │                                                                        │
+     └─────────────────────────────── Webhook Callback <─────────────────────┘
 ```
 
-## Main Environment Variables
+### Workflow
 
-| Variable Name               | Description                      | Default/Required        |
-| --------------------------- | -------------------------------- | ----------------------- |
-| QUEUE_TYPE                  | queue type (redis/sqs)           | redis                   |
-| LEADER_ELECTION_LOCK_NAME   | leader election lock name        | aws-sqs-job-worker-lock |
-| POD_NAME                    | pod name                         | required                |
-| POD_NAMESPACE               | pod namespace                    | required                |
-| POLLING_INTERVAL            | queue polling interval (seconds) | 5                       |
-| REDIS_ENDPOINT              | Redis connection address         | required                |
-| REDIS_DB                    | Redis DB index                   | required                |
-| REDIS_JOB_KEY_PREFIX        | Redis job key prefix             | job-worker-             |
-| AWS_SQS_REGION              | SQS region                       | required                |
-| AWS_SQS_URL                 | SQS queue url                    | required                |
-| ACTIVE_DEADLINE_SECONDS_MAX | Max job execution seconds        | 86400                   |
+1. **Message Reception**: Client sends job requests to the message queue
+2. **Message Consumption**: Job Worker pulls messages from the queue
+3. **Job Creation**: Worker validates and parses messages, then creates corresponding Kubernetes Jobs
+4. **Status Monitoring**: Worker monitors Job status and reports results or errors back to the client via webhook callbacks
+5. **Logging**: All important events and errors are logged
 
-## How to Start
+## ✨ Features
 
-1. Set up environment variables
-2. Build/Run main.go, e.g.
-   ```
-   go run ./cmd
-   ```
-3. Refer to yaml/json in the example/ directory
+- 🔄 **Multiple Queue Support**: Supports multiple message queue backends (extensible)
+- 🎯 **Kubernetes Job Management**: Automatically creates and manages Kubernetes Jobs with full Job configuration options
+- 🔐 **Leader Election**: Uses Kubernetes Leader Election to ensure only one Worker processes the queue at a time
+- 📊 **Monitoring Metrics**: Provides Prometheus metrics for monitoring and alerting
+- 🔔 **Webhook Callbacks**: Supports callback notifications on task status changes
+- 🏥 **Health Checks**: Provides HTTP health check endpoints
+- 🔄 **Job Recovery**: Supports recovery of incomplete jobs from cache
+- ⚡ **Concurrent Processing**: Supports worker pool pattern for improved processing efficiency
 
----
+## 🚀 Quick Start
 
-## SQS message JSON body
+### Prerequisites
 
-- id: unique
-- service: job app label value
-- job.prefixName: job prefix name
-- job.namespace: job namespace
-- job.image: job image
-- job.command: container command (optional)
-- job.args: container args (optional)
-- job.serviceAccount: service account name (need create first, or use client sa, optional)
-- job.ttlSecondsAfterFinished: seconds, automatic cleanup for finished jobs (must be > 30s)
-- job.backoffLimit: specify the number of retries, recommended 0
-- job.activeDeadlineSeconds: maximum runtime for the Job in seconds (60 ~ 86400)
-- job.gpuEnable: whether to use GPU node (optional)
-- job.gpuNumber: deployment resources nvidia.com/gpu number, which represents how many GPUs are required (optional)
-- job.env: deployment env (optional)
-- job.envFrom: deployment envFrom, type list: configmap, secret (optional)
-- job.resources: cpu, memory setting (optional)
-- job.nodeSelector: node affinity selector (optional)
-- job.toleration: toleration for node taints (optional)
-- job.volume: mount folder (optional)
-- webhook: callback config (optional)
+- Kubernetes cluster (1.20+)
+- Message queue service (depending on configured queue type)
+- Redis (for caching and deduplication)
+- Go 1.24+ (for local development)
+
+### Local Run
+
+1. **Clone the repository**
+
+```bash
+git clone <repository-url>
+cd k8s-queue-job-worker
+```
+
+2. **Set environment variables**
+
+```bash
+export POD_NAME=local-worker
+export POD_NAMESPACE=default
+export CACHE_REDIS_ENDPOINT=localhost:6379
+export CACHE_REDIS_DB=0
+# ... other required environment variables
+```
+
+3. **Run the application**
+
+```bash
+go run ./cmd/main.go
+```
+
+### Docker Run
+
+```bash
+docker build -t k8s-queue-job-worker:latest -f build/Dockerfile .
+docker run -e POD_NAME=worker-1 -e POD_NAMESPACE=default ... k8s-queue-job-worker:latest
+```
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+| Variable Name | Description | Default | Required |
+|--------------|-------------|---------|----------|
+| **Basic Configuration** |
+| `POD_NAME` | Pod name | - | ✅ |
+| `POD_NAMESPACE` | Pod namespace | - | ✅ |
+| `LEADER_ELECTION_LOCK_NAME` | Leader Election lock name | `job-worker-lock` | ❌ |
+| `POLLING_INTERVAL` | Queue polling interval (seconds) | `5` | ❌ |
+| **HTTP Server** |
+| `HTTP_SERVER_PORT` | HTTP server port | `8080` | ❌ |
+| `HTTP_SERVER_TIMEOUT_SECONDS` | HTTP server timeout (seconds) | `30` | ❌ |
+| **Queue Configuration** |
+| `QUEUE_TYPE` | Queue type | `redis` | ❌ |
+| `QUEUE_WORKER_POOL_SIZE` | Worker pool size (1-10) | `10` | ❌ |
+| **Redis Queue** |
+| `REDIS_QUEUE_ENDPOINT` | Redis queue connection address | - | Conditional* |
+| `REDIS_QUEUE_DB` | Redis queue database index | `0` | ❌ |
+| `REDIS_QUEUE_KEY_PREFIX` | Redis queue key prefix | `queue-` | ❌ |
+| **Cache Configuration** |
+| `CACHE_REDIS_ENDPOINT` | Redis cache connection address | - | ✅ |
+| `CACHE_REDIS_DB` | Redis cache database index | - | ✅ |
+| `CACHE_JOB_KEY_PREFIX` | Cache Job key prefix | `job-worker-` | ❌ |
+| **Kubernetes Configuration** |
+| `KUBERNETES_CLIENT_TIMEOUT` | Kubernetes client timeout (seconds) | `30` | ❌ |
+| `POD_START_TIMEOUT` | Pod start timeout (seconds) | `600` | ❌ |
+
+\* Required when `QUEUE_TYPE=redis`
+
+### Configuration Validation
+
+The application automatically validates configuration on startup:
+- `POD_START_TIMEOUT` must be greater than 0
+- `QUEUE_TYPE` must be a supported type
+- `QUEUE_WORKER_POOL_SIZE` must be between 1-10
+- Required configuration items are validated based on `QUEUE_TYPE`
+
+## 📨 Message Format
+
+### Message Structure
+
+Messages sent to the queue must be in JSON format with the following fields:
 
 ```json
 {
   "id": "31a89a91-43d8-4786-a195-9b25cec28a44",
   "service": "example",
   "job": {
-    "prefixName": "bb",
+    "prefixName": "my-job",
     "namespace": "default",
-    "image": "busybox",
-    "command": ["/bin/sh", "-c", "echo Hello World && sleep 30 && exit 0"],
+    "image": "busybox:latest",
+    "command": ["/bin/sh", "-c", "echo Hello World"],
     "args": [],
     "serviceAccount": "default",
     "ttlSecondsAfterFinished": 60,
@@ -111,15 +148,15 @@ example/        # Example yaml/json
     "gpuNumber": 1,
     "env": [
       {
-        "name": "Test1",
-        "value": "Hello from a static variable!" 
+        "name": "ENV_VAR",
+        "value": "value"
       }
     ],
     "envRef": [
-        {
-          "name": "busybox-default",
-          "type": "configmap"
-        }
+      {
+        "name": "configmap-name",
+        "type": "configmap"
+      }
     ],
     "resources": {
       "limits": {
@@ -140,32 +177,78 @@ example/        # Example yaml/json
       "value": "value"
     },
     "volume": {
-      "mountPath": "workdir",
-      "pvc": "ps-pvc"
+      "mountPath": "/workdir",
+      "pvc": "persistent-volume-claim"
     }
   },
   "webhook": {
-    "url": "http://webhook.com"
+    "url": "http://webhook.example.com/callback"
   }
 }
 ```
 
----
+### Field Descriptions
 
-## Callback API body
+#### Root-Level Fields
 
-- id: sqs message id
-- status:
-  - 0: job resource created
-  - 1: pod started
-  - 2: job complete
-  - 3: job failed
-  - 99: job exception
-- detail: extra details depending on status
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | ✅ | Unique task identifier |
+| `service` | string | ✅ | Service label for Job's app label |
+| `job` | object | ✅ | Job configuration object |
+| `webhook` | object | ❌ | Webhook callback configuration |
 
-## Example callback
+#### Job Configuration Fields
 
-**status 0** (job created)
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `prefixName` | string | ✅ | Job name prefix |
+| `namespace` | string | ✅ | Job namespace |
+| `image` | string | ✅ | Container image |
+| `command` | array | ❌ | Container command |
+| `args` | array | ❌ | Container arguments |
+| `serviceAccount` | string | ❌ | ServiceAccount name |
+| `ttlSecondsAfterFinished` | int | ❌ | Auto-cleanup time after Job completion (seconds, must be > 30) |
+| `backoffLimit` | int | ❌ | Number of retries, recommended 0 |
+| `activeDeadlineSeconds` | int | ❌ | Maximum Job runtime (seconds, 60-86400) |
+| `gpuEnable` | bool | ❌ | Whether to enable GPU |
+| `gpuNumber` | int | ❌ | Number of GPUs (1-4) |
+| `env` | array | ❌ | Environment variable list |
+| `envRef` | array | ❌ | Environment variables from ConfigMap/Secret |
+| `resources` | object | ❌ | Resource limits and requests |
+| `nodeSelector` | object | ❌ | Node selector |
+| `toleration` | object | ❌ | Toleration configuration |
+| `volume` | object | ❌ | Volume mount configuration |
+
+## 🔔 Callback API
+
+When task status changes, the Worker sends HTTP POST requests to the configured Webhook URL.
+
+### Callback Request Format
+
+```json
+{
+  "id": "31a89a91-43d8-4786-a195-9b25cec28a44",
+  "status": 0,
+  "detail": {
+    // Detail content varies based on status
+  }
+}
+```
+
+### Status Codes
+
+| Status Code | Description | Detail Content |
+|-------------|-------------|----------------|
+| `0` | Job resource created | `jobId`, `jobName` |
+| `1` | Pod started | `podId`, `podName` |
+| `2` | Job completed | `duration` (seconds) |
+| `3` | Job failed | `error` (contains `errorCode` and `message`) |
+| `99` | Job exception | `error` (contains `errorCode` and `message`) |
+
+### Callback Examples
+
+#### Status 0 - Job Created
 
 ```json
 {
@@ -173,12 +256,12 @@ example/        # Example yaml/json
   "status": 0,
   "detail": {
     "jobId": "08c87282-97e8-4993-9da4-359f3e84fdfd",
-    "jobName": "bb-fbe70e59"
+    "jobName": "my-job-fbe70e59"
   }
 }
 ```
 
-**status 1** (pod started)
+#### Status 1 - Pod Started
 
 ```json
 {
@@ -186,12 +269,12 @@ example/        # Example yaml/json
   "status": 1,
   "detail": {
     "podId": "08c87282-97e8-4993-9da4-359f3e84fdfd",
-    "podName": "bb-fbe70e59-ww7g2"
+    "podName": "my-job-fbe70e59-ww7g2"
   }
 }
 ```
 
-**status 2** (job completed)
+#### Status 2 - Job Completed
 
 ```json
 {
@@ -202,9 +285,8 @@ example/        # Example yaml/json
   }
 }
 ```
-> duration: seconds
 
-**status 3 or 99** (job failed / exception)
+#### Status 3/99 - Job Failed or Exception
 
 ```json
 {
@@ -212,9 +294,208 @@ example/        # Example yaml/json
   "status": 3,
   "detail": {
     "error": {
-      "errorCode": "ERROR_CODE",
-      "message": "error message"
+      "errorCode": "JOB_EXECUTION_FAILED",
+      "message": "Job execution failed with exit code 1"
     }
   }
 }
 ```
+
+## 📁 Project Structure
+
+```
+k8s-queue-job-worker/
+├── cmd/                    # Application entry point
+│   └── main.go            # Main program
+├── configs/               # Configuration management
+│   └── configs.go        # Environment variable configuration parsing
+├── internal/             # Internal packages
+│   ├── app/              # Application layer logic
+│   │   ├── callback/     # Webhook callback handling
+│   │   ├── http/         # HTTP server
+│   │   ├── job/          # Job processing logic
+│   │   ├── utils/        # Utility functions
+│   │   └── worker/       # Worker main logic
+│   └── pkg/              # Shared components
+│       ├── cache/        # Cache interface and implementation
+│       ├── k8s/          # Kubernetes client
+│       ├── logger/       # Logging utilities
+│       ├── observability/# Observability (metrics, tracing)
+│       └── queue/        # Queue interface and implementation
+├── build/                 # Build related
+│   └── Dockerfile        # Docker build file
+├── example/              # Example files
+│   ├── callback.yaml    # Callback service example
+│   ├── deployment.yaml  # Deployment configuration example
+│   └── message.json     # Message format example
+├── go.mod                # Go module definition
+└── README.md            # This document
+```
+
+## 🚢 Deployment Guide
+
+### Kubernetes Deployment
+
+1. **Create ServiceAccount and RBAC**
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: job-worker-sa
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: job-worker-role
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: job-worker-binding
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: job-worker-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: job-worker-role
+  apiGroup: rbac.authorization.k8s.io
+```
+
+2. **Deploy Worker**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: job-worker
+spec:
+  replicas: 2  # Supports multiple replicas, elected via Leader Election
+  selector:
+    matchLabels:
+      app: job-worker
+  template:
+    metadata:
+      labels:
+        app: job-worker
+    spec:
+      serviceAccountName: job-worker-sa
+      containers:
+        - name: job-worker
+          image: job-worker:latest
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CACHE_REDIS_ENDPOINT
+              value: "redis-service:6379"
+            - name: CACHE_REDIS_DB
+              value: "0"
+            # ... other environment variables
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+```
+
+3. **Create Service (Optional)**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: job-worker
+spec:
+  selector:
+    app: job-worker
+  ports:
+    - port: 8080
+      targetPort: http
+      name: http
+```
+
+### High Availability Deployment
+
+- Deploy multiple replicas (recommended 2-3)
+- Use Leader Election to ensure only one Worker processes the queue
+- Configure appropriate resource limits and requests
+- Set up health checks and readiness probes
+
+## 📊 Monitoring & Observability
+
+### Prometheus Metrics
+
+The Worker exposes the following Prometheus metrics (default at `/metrics` endpoint):
+
+- `queue_length`: Current queue length
+- `messages_processed_total`: Total number of processed messages
+- `messages_failed_total`: Total number of failed messages
+
+### Health Check
+
+- **Endpoint**: `GET /healthz`
+- **Response**: HTTP 200 indicates healthy
+
+### Logging
+
+- Uses structured logging for all important events
+- Supports trace ID to correlate related logs
+- Log levels: INFO, WARN, ERROR
+
+## 🔧 Development
+
+### Local Development
+
+```bash
+# Install dependencies
+go mod download
+
+# Run tests
+go test ./...
+
+# Build
+go build -o bin/job-worker ./cmd/main.go
+```
+
+### Build Docker Image
+
+```bash
+docker build -t job-worker:latest -f build/Dockerfile .
+```
+
+## 📝 License
+
+See [LICENSE](LICENSE) file for details.
+
+## 🤝 Contributing
+
+Issues and Pull Requests are welcome!

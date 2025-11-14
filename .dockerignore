@@ -2,6 +2,8 @@
 .dockerignore
 .gitignore
 README.md
+LICENSE
+.github
 VERSION.md
 build
 example
